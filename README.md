@@ -168,7 +168,7 @@ killall Finder
 
 ## 验证状态与当前限制
 
-- v0.1.0 的 [GitHub Actions 发布流水线](https://github.com/3wlh/RightClick/actions/runs/34679890759) 已通过：arm64 与 x86_64 各 83 项测试，以及双架构打包与发布。
+- 发布由 [GitHub Actions](https://github.com/3wlh/RightClick/actions/workflows/package-macos.yml) 手动触发：一次运行同时完成 arm64 / x86_64 打包并自动创建 prerelease。
 - 测试覆盖 Core 执行逻辑和设置持久化，包括批次重试与文件操作失败回滚。
 - 已安装 Finder Extension 的通知刷新、真实 XPC 故障和权限切换仍待实机验收。
 - 当前不支持文件操作撤销；安装包未进行 Developer ID 签名与公证。
@@ -206,6 +206,14 @@ scripts/package-macos.sh debug
 ```bash
 RIGHTCLICKPRO_PACKAGE_DMG=1 scripts/package-macos.sh release
 ```
+
+### 发布 Release（GitHub Actions）
+
+1. 打开仓库的 Actions 页面，选择 `Package macOS`，点击 `Run workflow`；
+2. `version` 留空则使用当天日期（如 `26.11.08`），也可以填指定版本（如 `0.1.0`）；
+3. 运行结束后自动创建对应的 prerelease，并把 arm64 / x86_64 的 DMG 上传为 Release 资产。
+
+推送 `v*` tag 不再触发构建；同一版本重复运行会覆盖同名资产。
 
 ### 本地 Finder Sync smoke test
 
