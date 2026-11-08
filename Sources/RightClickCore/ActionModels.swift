@@ -313,7 +313,7 @@ public struct RightClickConfig: Codable, Equatable, Sendable {
                 title: "粘贴到此处",
                 kind: .paste,
                 visibility: [.container, .selection],
-                placement: .rootMenu,
+                placement: .submenu,
                 group: .fileOperations,
                 order: order
             ),

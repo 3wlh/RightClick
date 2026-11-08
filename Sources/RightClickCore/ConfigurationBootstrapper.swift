@@ -153,6 +153,7 @@ public struct ConfigurationBootstrapper {
         appendMissingDirectoryActions(for: directoryIDs, bookmarks: bookmarks, to: &repaired.actions)
         appendMissingFileOperationActions(to: &repaired.actions)
         enablePasteOnSelection(in: &repaired.actions)
+        movePasteIntoFileOperationSubmenu(in: &repaired.actions)
         migrateDefaultTemplateNames(in: &repaired.fileTemplates)
         removeLegacyDefaultFileTemplates(from: &repaired.fileTemplates, actions: &repaired.actions)
         removeLegacyDeveloperEntrypoints(from: &repaired.developerEntrypoints, actions: &repaired.actions)
@@ -171,6 +172,14 @@ public struct ConfigurationBootstrapper {
     private func enablePasteOnSelection(in actions: inout [RightClickAction]) {
         for index in actions.indices where actions[index].kind == .paste {
             actions[index].visibility.insert(.selection)
+        }
+    }
+
+    /// 粘贴动作原来默认放在一级菜单，现统一归入「文件操作」分组。
+    private func movePasteIntoFileOperationSubmenu(in actions: inout [RightClickAction]) {
+        for index in actions.indices where actions[index].kind == .paste {
+            actions[index].placement = .submenu
+            actions[index].group = .fileOperations
         }
     }
 
