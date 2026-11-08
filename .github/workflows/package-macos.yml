@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 包版本（留空则使用当天日期，如 26.11.08；tag 触发时使用 tag）
+        description: 包版本（留空则使用当天日期）
         required: false
         type: string
       configuration:
