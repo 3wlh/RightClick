@@ -211,7 +211,7 @@ RIGHTCLICKPRO_PACKAGE_DMG=1 scripts/package-macos.sh release
 
 1. 打开仓库的 Actions 页面，选择 `Package macOS`，点击 `Run workflow`；
 2. `version` 留空则使用当天日期（如 `26.11.08`），也可以填指定版本（如 `0.1.0`）；
-3. 运行结束后自动创建对应的 Release（勾选 `prerelease` 则发布为预发行版），并把 arm64 / x86_64 的 DMG 上传为 Release 资产。
+3. 运行结束后自动创建对应的正式 Release，并把 arm64 / x86_64 的 DMG 上传为 Release 资产。
 
 推送 `v*` tag 不再触发构建；同一版本重复运行会覆盖同名资产。
 

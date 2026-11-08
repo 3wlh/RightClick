@@ -15,11 +15,6 @@ on:
         options:
           - release
           - debug
-      prerelease:
-        description: 标记为 Pre-release（默认发布正式版）
-        required: true
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -103,7 +98,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           INPUT_VERSION: ${{ inputs.version }}
-          INPUT_PRERELEASE: ${{ inputs.prerelease }}
         run: |
           set -euo pipefail
 
@@ -117,16 +111,10 @@ jobs:
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             version="${GITHUB_REF_NAME#v}"
             tag="${GITHUB_REF_NAME}"
-            prerelease=()
             create_target=(--verify-tag)
           else
             version="${INPUT_VERSION:-$(TZ=Asia/Shanghai date +%y.%m.%d)}"
             tag="v${version}"
-            if [[ "${INPUT_PRERELEASE}" == "true" ]]; then
-              prerelease=(--prerelease)
-            else
-              prerelease=()
-            fi
             create_target=(--target "${GITHUB_SHA}")
           fi
 
@@ -144,7 +132,6 @@ jobs:
             gh release create "$tag" "${assets[@]}" \
               --repo "$GITHUB_REPOSITORY" \
               "${create_target[@]}" \
-              "${prerelease[@]}" \
               --title "RightClick ${version}" \
               --notes-file "$notes_file"
           fi
