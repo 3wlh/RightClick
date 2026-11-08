@@ -5,8 +5,8 @@ import UniformTypeIdentifiers
 
 enum AppMetadata {
     static let displayName = "RightClick"
-    static let releasesPageURL = URL(string: "https://github.com/3wlh/RightClick-Pro/releases")!
-    static let latestReleaseAPIURL = URL(string: "https://api.github.com/repos/3wlh/RightClick-Pro/releases/latest")!
+    static let releasesPageURL = URL(string: "https://github.com/3wlh/RightClick/releases")!
+    static let latestReleaseAPIURL = URL(string: "https://api.github.com/repos/3wlh/RightClick/releases/latest")!
 
     static var currentVersion: String {
         let info = Bundle.main.infoDictionary ?? [:]
