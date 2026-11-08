@@ -303,7 +303,7 @@ scripts/package-macos.sh debug
 
 ## 致谢
 
-本项目基于 [iheeleme/RightClick-Pro](https://github.com/iheeleme/RightClick-Pro) 修改而来，并在其基础上进行了大量重构与功能扩展；原项目与本仓库均采用 CC BY-NC-SA 4.0 授权，感谢原作者的开源工作。
+本项目基于 [iheeleme/RightClick-Pro](https://github.com/iheeleme/RightClick-Pro) 修改而来，并在其基础上进行了大量重构与功能扩展；感谢原作者的开源工作。
 
 感谢[LinuxDo](https://linux.do/)社区，真诚、友善、团结、专业，共建你我引以为荣之社区。
 
