@@ -15,15 +15,7 @@ enum AppMetadata {
     }
 
     static var versionText: String {
-        let info = Bundle.main.infoDictionary ?? [:]
-        let version = currentVersion
-        let build = (info["CFBundleVersion"] as? String)
-            .flatMap { $0.isEmpty ? nil : $0 }
-
-        guard let build, build != version else {
-            return "版本 \(version)"
-        }
-        return "版本 \(version) (\(build))"
+        "版本 \(currentVersion)"
     }
 }
 
