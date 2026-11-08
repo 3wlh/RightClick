@@ -76,7 +76,7 @@ final class SettingsViewModelTests: XCTestCase {
             .appendingPathComponent("RightClickSettingsTests")
             .appendingPathComponent(UUID().uuidString)
         let paths = RightClickStoragePaths(baseURL: directory)
-        let config = RightClickConfig(actions: [], maxRootMenuActions: 5)
+        let config = RightClickConfig(maxRootMenuActions: 5, actions: [])
         try JSONFileStore<RightClickConfig>(url: paths.configURL).save(config)
         try JSONFileStore<DirectoryBookmarkCatalog>(url: paths.bookmarksURL).save(DirectoryBookmarkCatalog())
         let viewModel = SettingsViewModel(paths: paths)
