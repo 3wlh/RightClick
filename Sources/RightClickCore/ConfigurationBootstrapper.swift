@@ -299,6 +299,7 @@ public struct ConfigurationBootstrapper {
                 visibility: [.container, .toolbar],
                 placement: .submenu,
                 group: .commonDirectories,
+                isEnabled: false,
                 order: order,
                 payload: ActionPayload(directoryID: bookmark.id)
             ),
@@ -309,6 +310,7 @@ public struct ConfigurationBootstrapper {
                 visibility: [.selection],
                 placement: .submenu,
                 group: .moveToCommonDirectory,
+                isEnabled: false,
                 order: order + 10,
                 payload: ActionPayload(directoryID: bookmark.id)
             ),
@@ -319,6 +321,7 @@ public struct ConfigurationBootstrapper {
                 visibility: [.selection],
                 placement: .submenu,
                 group: .copyToCommonDirectory,
+                isEnabled: false,
                 order: order + 20,
                 payload: ActionPayload(directoryID: bookmark.id)
             )
@@ -466,7 +469,7 @@ public struct ConfigurationBootstrapper {
                     title: "新建\(template.title)",
                     kind: .createFile,
                     visibility: [.container],
-                    placement: template.id == "template-md" ? .rootMenu : .submenu,
+                    placement: .submenu,
                     group: .createFile,
                     order: order,
                     payload: ActionPayload(templateID: template.id)
