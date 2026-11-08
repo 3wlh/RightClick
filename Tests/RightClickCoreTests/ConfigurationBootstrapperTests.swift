@@ -386,6 +386,7 @@ final class ConfigurationBootstrapperTests: XCTestCase {
           ]
         }
         """
+        try FileManager.default.createDirectory(at: paths.baseURL, withIntermediateDirectories: true)
         try Data(legacyJSON.utf8).write(to: paths.configURL, options: [.atomic])
 
         let result = try ConfigurationBootstrapper().bootstrap(paths: paths)

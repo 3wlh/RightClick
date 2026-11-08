@@ -93,7 +93,7 @@ final class StorageTests: XCTestCase {
 
         XCTAssertEqual(config.schemaVersion, RightClickConstants.currentSchemaVersion)
         XCTAssertEqual(config.shortcutDirectoryIDs, ["desktop", "downloads"])
-        XCTAssertEqual(config.developerEntrypoints.map(\.id), RightClickConfig.defaultDeveloperEntrypoints().map(\.id))
+        XCTAssertTrue(config.developerEntrypoints.isEmpty)
     }
 
     func testConfigSkipsRemovedCommandTemplateActionsWhenDecoding() throws {
