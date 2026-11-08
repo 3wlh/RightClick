@@ -15,6 +15,11 @@ on:
         options:
           - release
           - debug
+      prerelease:
+        description: 标记为 Pre-release（日期版本建议开启，正式版本关闭）
+        required: true
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -98,6 +103,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           INPUT_VERSION: ${{ inputs.version }}
+          INPUT_PRERELEASE: ${{ inputs.prerelease }}
         run: |
           set -euo pipefail
 
@@ -116,7 +122,11 @@ jobs:
           else
             version="${INPUT_VERSION:-$(TZ=Asia/Shanghai date +%y.%m.%d)}"
             tag="v${version}"
-            prerelease=(--prerelease)
+            if [[ "${INPUT_PRERELEASE}" == "true" ]]; then
+              prerelease=(--prerelease)
+            else
+              prerelease=()
+            fi
             create_target=(--target "${GITHUB_SHA}")
           fi
 
