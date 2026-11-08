@@ -20,14 +20,12 @@ final class ActionRunnerTests: XCTestCase {
             actions: [action],
             fileTemplates: [FileTemplate(id: "markdown", title: "Markdown", defaultFileName: "Note.md", contents: "# Note\n")]
         )
-        let log = InMemoryOperationLog()
         let opener = RecordingURLOpener()
         let runner = ActionRunner(
             configProvider: StaticRightClickConfigProvider(
                 config: config,
                 bookmarkCatalog: DirectoryBookmarkCatalog(bookmarks: [bookmark])
             ),
-            operationLog: log,
             cutClipboard: InMemoryCutClipboardStore(),
             urlOpener: opener,
             developerAppOpener: opener
@@ -41,7 +39,6 @@ final class ActionRunnerTests: XCTestCase {
 
         XCTAssertEqual(result.status, .success)
         XCTAssertTrue(FileManager.default.fileExists(atPath: directory.appendingPathComponent("Note.md").path))
-        XCTAssertEqual(try log.loadRecent().first?.kind, .createFile)
     }
 
     func testFileActionsAreNotBoundedByShortcutDirectories() throws {
@@ -63,7 +60,6 @@ final class ActionRunnerTests: XCTestCase {
         )
         let runner = ActionRunner(
             configProvider: StaticRightClickConfigProvider(config: config),
-            operationLog: InMemoryOperationLog(),
             cutClipboard: InMemoryCutClipboardStore(),
             urlOpener: RecordingURLOpener(),
             developerAppOpener: RecordingURLOpener()
@@ -113,14 +109,12 @@ final class ActionRunnerTests: XCTestCase {
             actions: actions
         )
         let clipboard = InMemoryCutClipboardStore()
-        let log = InMemoryOperationLog()
         let opener = RecordingURLOpener()
         let runner = ActionRunner(
             configProvider: StaticRightClickConfigProvider(
                 config: config,
                 bookmarkCatalog: DirectoryBookmarkCatalog(bookmarks: [bookmark])
             ),
-            operationLog: log,
             cutClipboard: clipboard,
             urlOpener: opener,
             developerAppOpener: opener
@@ -167,10 +161,8 @@ final class ActionRunnerTests: XCTestCase {
         let clipboard = InMemoryCutClipboardStore(
             record: CutClipboardRecord(sourceURLs: [completedFile, pendingFile])
         )
-        let log = InMemoryOperationLog()
         let runner = ActionRunner(
             configProvider: StaticRightClickConfigProvider(config: config),
-            operationLog: log,
             cutClipboard: clipboard,
             urlOpener: RecordingURLOpener(),
             developerAppOpener: RecordingURLOpener()
@@ -186,7 +178,6 @@ final class ActionRunnerTests: XCTestCase {
         XCTAssertEqual(firstResult.affectedURLs, [targetDirectory.appendingPathComponent("done.txt")])
         XCTAssertEqual(firstResult.remainingURLs, [pendingFile])
         XCTAssertEqual(try clipboard.load()?.sourceURLs, [pendingFile])
-        XCTAssertEqual(try log.loadRecent().last?.kind, .paste)
 
         try "pending".write(to: pendingFile, atomically: true, encoding: .utf8)
         let secondResult = runner.run(request)
@@ -197,7 +188,7 @@ final class ActionRunnerTests: XCTestCase {
         XCTAssertNil(try clipboard.load())
     }
 
-    func testMoveFailureLogsTheActionOperationKind() throws {
+    func testMoveFailureReturnsPendingSource() throws {
         let directory = try temporaryDirectory()
         let targetDirectory = directory.appendingPathComponent("target")
         try FileManager.default.createDirectory(at: targetDirectory, withIntermediateDirectories: true)
@@ -213,13 +204,11 @@ final class ActionRunnerTests: XCTestCase {
             order: 1,
             payload: ActionPayload(directoryID: bookmark.id)
         )
-        let log = InMemoryOperationLog()
         let runner = ActionRunner(
             configProvider: StaticRightClickConfigProvider(
                 config: RightClickConfig(actions: [action]),
                 bookmarkCatalog: DirectoryBookmarkCatalog(bookmarks: [bookmark])
             ),
-            operationLog: log,
             cutClipboard: InMemoryCutClipboardStore(),
             urlOpener: RecordingURLOpener(),
             developerAppOpener: RecordingURLOpener(),
@@ -239,41 +228,6 @@ final class ActionRunnerTests: XCTestCase {
 
         XCTAssertEqual(result.status, .failure)
         XCTAssertEqual(result.remainingURLs, [missingSource])
-        XCTAssertEqual(try log.loadRecent().first?.kind, .move)
-    }
-
-    func testPastePreservesBatchResultWhenHistoryCannotBeSaved() throws {
-        let directory = try temporaryDirectory()
-        let target = directory.appendingPathComponent("target")
-        let logURL = directory.appendingPathComponent("blocked-log")
-        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(at: logURL, withIntermediateDirectories: true)
-        let completed = directory.appendingPathComponent("completed.txt")
-        let pending = directory.appendingPathComponent("pending.txt")
-        try Data("completed".utf8).write(to: completed)
-        let clipboard = InMemoryCutClipboardStore(record: CutClipboardRecord(sourceURLs: [completed, pending]))
-        let action = RightClickAction(
-            id: "paste", title: "Paste", kind: .paste,
-            visibility: [.container], placement: .submenu, order: 1
-        )
-        let runner = ActionRunner(
-            configProvider: StaticRightClickConfigProvider(config: RightClickConfig(actions: [action])),
-            operationLog: JSONLineOperationLog(url: logURL),
-            cutClipboard: clipboard,
-            urlOpener: RecordingURLOpener(),
-            developerAppOpener: RecordingURLOpener()
-        )
-
-        let result = runner.run(ActionRequest(
-            actionID: action.id,
-            context: FinderContext(invocation: .container, targetDirectory: target)
-        ))
-
-        XCTAssertEqual(result.status, .failure)
-        XCTAssertEqual(result.affectedURLs, [target.appendingPathComponent("completed.txt")])
-        XCTAssertEqual(result.remainingURLs, [pending])
-        XCTAssertEqual(try clipboard.load()?.sourceURLs, [pending])
-        XCTAssertTrue(result.message.contains("操作历史保存失败"))
     }
 
     func testPastePreservesBatchResultWhenClipboardCannotBeSaved() throws {
@@ -299,10 +253,8 @@ final class ActionRunnerTests: XCTestCase {
             id: "paste", title: "Paste", kind: .paste,
             visibility: [.container], placement: .submenu, order: 1
         )
-        let log = InMemoryOperationLog()
         let runner = ActionRunner(
             configProvider: StaticRightClickConfigProvider(config: RightClickConfig(actions: [action])),
-            operationLog: log,
             cutClipboard: ReadOnlyClipboard(record: CutClipboardRecord(sourceURLs: [completed, pending])),
             urlOpener: RecordingURLOpener(),
             developerAppOpener: RecordingURLOpener()
@@ -318,7 +270,6 @@ final class ActionRunnerTests: XCTestCase {
         XCTAssertEqual(result.remainingURLs, [pending])
         XCTAssertTrue(result.message.contains("剪切板更新失败"))
         XCTAssertTrue(result.message.contains("重新剪切"))
-        XCTAssertEqual(log.records.last?.destinationPaths, result.affectedURLs.map(\.path))
     }
 
     func testCutSucceedsWhenCatalogContainsInvalidUnrelatedBookmark() throws {
@@ -343,13 +294,11 @@ final class ActionRunnerTests: XCTestCase {
         )
         let config = RightClickConfig(shortcutDirectoryIDs: ["broken"], actions: [action])
         let clipboard = InMemoryCutClipboardStore()
-        let log = InMemoryOperationLog()
         let runner = ActionRunner(
             configProvider: StaticRightClickConfigProvider(
                 config: config,
                 bookmarkCatalog: DirectoryBookmarkCatalog(bookmarks: [invalidBookmark])
             ),
-            operationLog: log,
             cutClipboard: clipboard,
             urlOpener: RecordingURLOpener(),
             developerAppOpener: RecordingURLOpener()
@@ -368,9 +317,6 @@ final class ActionRunnerTests: XCTestCase {
 
         XCTAssertEqual(result.status, .success)
         XCTAssertEqual(try clipboard.load()?.sourceURLs, [file])
-        let record = try XCTUnwrap(log.loadRecent().first)
-        XCTAssertEqual(record.kind, .cut)
-        XCTAssertEqual(record.status, .success)
     }
 
     func testDirectoryActionMissingPayloadWinsOverInvalidUnrelatedBookmark() throws {
@@ -390,13 +336,11 @@ final class ActionRunnerTests: XCTestCase {
             group: .commonDirectories,
             order: 1
         )
-        let log = InMemoryOperationLog()
         let runner = ActionRunner(
             configProvider: StaticRightClickConfigProvider(
                 config: RightClickConfig(actions: [action]),
                 bookmarkCatalog: DirectoryBookmarkCatalog(bookmarks: [invalidBookmark])
             ),
-            operationLog: log,
             cutClipboard: InMemoryCutClipboardStore(),
             urlOpener: RecordingURLOpener(),
             developerAppOpener: RecordingURLOpener()
@@ -411,9 +355,6 @@ final class ActionRunnerTests: XCTestCase {
 
         XCTAssertEqual(result.status, .failure)
         XCTAssertEqual(result.message, ActionRunnerError.missingPayload("directoryID").localizedDescription)
-        let record = try XCTUnwrap(log.loadRecent().first)
-        XCTAssertEqual(record.status, .failure)
-        XCTAssertEqual(record.message, result.message)
     }
 
     func testDirectoryActionInvalidBookmarkPreservesFailureOperationLog() throws {
@@ -434,14 +375,12 @@ final class ActionRunnerTests: XCTestCase {
             order: 1,
             payload: ActionPayload(directoryID: invalidBookmark.id)
         )
-        let log = InMemoryOperationLog()
         let opener = RecordingURLOpener()
         let runner = ActionRunner(
             configProvider: StaticRightClickConfigProvider(
                 config: RightClickConfig(actions: [action]),
                 bookmarkCatalog: DirectoryBookmarkCatalog(bookmarks: [invalidBookmark])
             ),
-            operationLog: log,
             cutClipboard: InMemoryCutClipboardStore(),
             urlOpener: opener,
             developerAppOpener: RecordingURLOpener()
@@ -457,9 +396,6 @@ final class ActionRunnerTests: XCTestCase {
         XCTAssertEqual(result.status, .failure)
         XCTAssertEqual(result.message, BookmarkError.invalidBookmarkData(invalidBookmark.id).localizedDescription)
         XCTAssertTrue(opener.openedURLs.isEmpty)
-        let record = try XCTUnwrap(log.loadRecent().first)
-        XCTAssertEqual(record.status, .failure)
-        XCTAssertEqual(record.message, result.message)
     }
 
     func testOpenDirectoryUsesResolvedBookmarkURL() throws {
@@ -480,14 +416,12 @@ final class ActionRunnerTests: XCTestCase {
             shortcutDirectoryIDs: ["workspace"],
             actions: [action]
         )
-        let log = InMemoryOperationLog()
         let opener = RecordingURLOpener()
         let runner = ActionRunner(
             configProvider: StaticRightClickConfigProvider(
                 config: config,
                 bookmarkCatalog: DirectoryBookmarkCatalog(bookmarks: [bookmark])
             ),
-            operationLog: log,
             cutClipboard: InMemoryCutClipboardStore(),
             urlOpener: opener,
             developerAppOpener: opener,
@@ -586,10 +520,8 @@ final class ActionRunnerTests: XCTestCase {
             order: 1
         )
         let clipboard = InMemoryPathClipboard()
-        let log = InMemoryOperationLog()
         let runner = ActionRunner(
             configProvider: StaticRightClickConfigProvider(config: RightClickConfig(actions: [action])),
-            operationLog: log,
             cutClipboard: InMemoryCutClipboardStore(),
             pathClipboard: clipboard,
             urlOpener: RecordingURLOpener(),
@@ -609,7 +541,6 @@ final class ActionRunnerTests: XCTestCase {
 
         XCTAssertEqual(result.status, .success)
         XCTAssertEqual(clipboard.writtenPaths, [first.path, second.path])
-        XCTAssertEqual(try log.loadRecent().first?.kind, .copyPath)
     }
 
     func testCopyPathFallsBackToTargetDirectoryForContainerContext() throws {
@@ -626,7 +557,6 @@ final class ActionRunnerTests: XCTestCase {
         let clipboard = InMemoryPathClipboard()
         let runner = ActionRunner(
             configProvider: StaticRightClickConfigProvider(config: RightClickConfig(actions: [action])),
-            operationLog: InMemoryOperationLog(),
             cutClipboard: InMemoryCutClipboardStore(),
             pathClipboard: clipboard,
             urlOpener: RecordingURLOpener(),
@@ -668,10 +598,8 @@ final class ActionRunnerTests: XCTestCase {
                 order: 2
             )
         ]
-        let log = InMemoryOperationLog()
         let runner = ActionRunner(
             configProvider: StaticRightClickConfigProvider(config: RightClickConfig(actions: actions)),
-            operationLog: log,
             cutClipboard: InMemoryCutClipboardStore(),
             urlOpener: RecordingURLOpener(),
             developerAppOpener: RecordingURLOpener()
@@ -684,7 +612,6 @@ final class ActionRunnerTests: XCTestCase {
         XCTAssertEqual(hideResult.status, .success)
         XCTAssertEqual(unhideResult.status, .success)
         XCTAssertEqual(try file.resourceValues(forKeys: [.isHiddenKey]).isHidden, false)
-        XCTAssertEqual(try log.loadRecent().map(\.kind), [.hide, .unhide])
     }
 
     func testDeletePermanentlyRemovesSelectionWithoutTrash() throws {
@@ -700,10 +627,8 @@ final class ActionRunnerTests: XCTestCase {
             group: .fileOperations,
             order: 1
         )
-        let log = InMemoryOperationLog()
         let runner = ActionRunner(
             configProvider: StaticRightClickConfigProvider(config: RightClickConfig(actions: [action])),
-            operationLog: log,
             cutClipboard: InMemoryCutClipboardStore(),
             urlOpener: RecordingURLOpener(),
             developerAppOpener: RecordingURLOpener()
@@ -718,7 +643,6 @@ final class ActionRunnerTests: XCTestCase {
 
         XCTAssertEqual(result.status, .success)
         XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
-        XCTAssertEqual(try log.loadRecent().first?.kind, .delete)
     }
 
     private func runDeveloperEntrypoint(
@@ -754,7 +678,6 @@ final class ActionRunnerTests: XCTestCase {
                 config: config,
                 bookmarkCatalog: DirectoryBookmarkCatalog(bookmarks: [bookmark])
             ),
-            operationLog: InMemoryOperationLog(),
             cutClipboard: InMemoryCutClipboardStore(),
             urlOpener: opener,
             developerAppOpener: opener

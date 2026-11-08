@@ -34,18 +34,6 @@ final class StorageTests: XCTestCase {
         XCTAssertEqual(loaded.schemaVersion, RightClickConstants.currentSchemaVersion)
     }
 
-    func testOperationLogCapsRecords() throws {
-        let directory = try temporaryDirectory()
-        let log = JSONLineOperationLog(url: directory.appendingPathComponent("operation-log.jsonl"), maxRecords: 2)
-
-        try log.append(OperationRecord(actionID: "a", kind: .cut, status: .success))
-        try log.append(OperationRecord(actionID: "b", kind: .paste, status: .success))
-        try log.append(OperationRecord(actionID: "c", kind: .copy, status: .success))
-
-        let records = try log.loadRecent()
-        XCTAssertEqual(records.map(\.actionID), ["b", "c"])
-    }
-
     func testDefaultStoragePrefersApplicationSupportOverAppGroupContainer() throws {
         let directory = try temporaryDirectory()
         let homeDirectory = directory.appendingPathComponent("home")

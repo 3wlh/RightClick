@@ -34,15 +34,6 @@ private enum GitHubReleaseCheckResponse: Sendable {
     case failure(String)
 }
 
-private struct ConfigurationRollbackError: LocalizedError {
-    var saveMessage: String
-    var rollbackMessage: String
-
-    var errorDescription: String? {
-        "\(saveMessage)；原书签恢复失败：\(rollbackMessage)"
-    }
-}
-
 private enum GitHubReleaseClient {
     static func fetchLatestRelease(from url: URL) async -> GitHubReleaseCheckResponse {
         var request = URLRequest(url: url)
@@ -140,7 +131,7 @@ final class SettingsViewModel: NSObject, ObservableObject {
             case .directories:
                 return "folder"
             case .developer:
-                return "chevron.left.forwardslash.chevron.right"
+                return "square.grid.2x2"
             case .history:
                 return "doc.on.doc"
             case .templates:
@@ -217,7 +208,11 @@ final class SettingsViewModel: NSObject, ObservableObject {
     @Published var statusMessage = ""
     @Published var statusTone: StatusTone = .neutral
     @Published var hasUnsavedChanges = false
-    @Published var recentOperations: [OperationRecord] = []
+    /// 已写入磁盘的配置快照，用于判断当前编辑是否真的与已保存内容不同。
+    private var savedConfig = RightClickConfig()
+    private var savedBookmarks = DirectoryBookmarkCatalog()
+    /// 最近一次由编辑操作写入的状态文案，用于改回原值时清除未保存提示。
+    private var pendingUnsavedStatusMessage: String?
     @Published var developerEntrypointAddRequest = 0
     @Published var templateAddRequest = 0
     @Published var actionSearchText = ""
@@ -422,7 +417,6 @@ final class SettingsViewModel: NSObject, ObservableObject {
             bookmarks = defaultBookmarks
             config = defaultConfig
             hasUnsavedChanges = false
-            reloadRecentOperations()
             setStatus("已恢复默认预览配置", tone: .success)
         } catch {
             setStatus("恢复默认配置失败：\(error.localizedDescription)", tone: .error)
@@ -454,9 +448,10 @@ final class SettingsViewModel: NSObject, ObservableObject {
         }
 
         do {
+            let document = PersistedConfiguration(config: config, bookmarks: bookmarks)
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            let data = try encoder.encode(config)
+            let data = try encoder.encode(document)
             try data.write(to: url, options: [.atomic])
             setStatus("配置已导出：\(url.lastPathComponent)", tone: .success)
         } catch {
@@ -479,8 +474,15 @@ final class SettingsViewModel: NSObject, ObservableObject {
 
         do {
             let data = try Data(contentsOf: url)
-            let imported = try JSONDecoder().decode(RightClickConfig.self, from: data)
-            try persistConfiguration(imported, bookmarks: bookmarks)
+            let document: PersistedConfiguration
+            if let decoded = try? JSONDecoder().decode(PersistedConfiguration.self, from: data) {
+                document = decoded
+            } else {
+                // 兼容旧版仅包含 RightClickConfig 的导出文件。
+                let legacyConfig = try JSONDecoder().decode(RightClickConfig.self, from: data)
+                document = PersistedConfiguration(config: legacyConfig, bookmarks: bookmarks)
+            }
+            try persistConfiguration(document.config, bookmarks: document.bookmarks)
             loadOrBootstrap()
             hasUnsavedChanges = false
             setStatus("已导入配置：\(url.lastPathComponent)", tone: .success)
@@ -666,19 +668,6 @@ final class SettingsViewModel: NSObject, ObservableObject {
         }
     }
 
-    func reloadRecentOperations() {
-        do {
-            recentOperations = try JSONLineOperationLog(url: paths.operationLogURL)
-                .loadRecent()
-                .suffix(80)
-                .reversed()
-            setStatus("最近操作已刷新", tone: .neutral)
-        } catch {
-            recentOperations = []
-            setStatus("读取最近操作失败：\(error.localizedDescription)", tone: .error)
-        }
-    }
-
     @objc nonisolated private func handleActionFailureNotification(_ notification: Notification) {
         let userInfo = notification.userInfo
         let actionID = userInfo?[RightClickConstants.actionFailureActionIDKey] as? String
@@ -689,15 +678,6 @@ final class SettingsViewModel: NSObject, ObservableObject {
             let actionTitle = actionID.flatMap { id in
                 self.config.actions.first(where: { $0.id == id })?.title
             } ?? actionID ?? "Finder 操作"
-            // Finder 可能在 App 未激活时发送通知，先刷新持久化历史，再保留错误状态。
-            do {
-                recentOperations = try JSONLineOperationLog(url: paths.operationLogURL)
-                    .loadRecent()
-                    .suffix(80)
-                    .reversed()
-            } catch {
-                // 失败通知本身仍然要可见，历史文件异常不能覆盖原始动作错误。
-            }
             setStatus("\(actionTitle)失败：\(message)", tone: .error)
         }
     }
@@ -1157,9 +1137,10 @@ final class SettingsViewModel: NSObject, ObservableObject {
         paths = result.paths
         config = result.config
         bookmarks = result.bookmarks
+        savedConfig = result.config
+        savedBookmarks = result.bookmarks
         storagePath = result.paths.baseURL.path
         hasUnsavedChanges = false
-        recentOperations = (try? JSONLineOperationLog(url: result.paths.operationLogURL).loadRecent().suffix(80).reversed()) ?? []
     }
 
     private func scheduleFinderExtensionRegistration() {
@@ -1624,34 +1605,14 @@ final class SettingsViewModel: NSObject, ObservableObject {
         _ newConfig: RightClickConfig,
         bookmarks newBookmarks: DirectoryBookmarkCatalog
     ) throws {
-        let configStore = JSONFileStore<RightClickConfig>(url: paths.configURL)
-        let previousBookmarkData = FileManager.default.fileExists(atPath: paths.bookmarksURL.path)
-            ? try Data(contentsOf: paths.bookmarksURL)
-            : nil
-        var didSaveBookmarks = false
+        try PersistedConfigurationStore.save(
+            PersistedConfiguration(config: newConfig, bookmarks: newBookmarks),
+            paths: paths
+        )
 
-        do {
-            try JSONFileStore<DirectoryBookmarkCatalog>(url: paths.bookmarksURL).save(newBookmarks)
-            didSaveBookmarks = true
-            try configStore.save(newConfig)
-        } catch {
-            // 两个文件不能原子提交；第二次写入失败时恢复第一份文件的原始内容。
-            if didSaveBookmarks {
-                do {
-                    if let previousBookmarkData {
-                        try previousBookmarkData.write(to: paths.bookmarksURL, options: [.atomic])
-                    } else {
-                        try FileManager.default.removeItem(at: paths.bookmarksURL)
-                    }
-                } catch let rollbackError {
-                    throw ConfigurationRollbackError(
-                        saveMessage: error.localizedDescription,
-                        rollbackMessage: rollbackError.localizedDescription
-                    )
-                }
-            }
-            throw error
-        }
+        savedConfig = newConfig
+        savedBookmarks = newBookmarks
+        pendingUnsavedStatusMessage = nil
 
         DistributedNotificationCenter.default().postNotificationName(
             Notification.Name(RightClickConstants.configurationChangedNotificationName),
@@ -1886,8 +1847,15 @@ final class SettingsViewModel: NSObject, ObservableObject {
     }
 
     private func markUnsaved(_ message: String = "有未保存的配置更改") {
-        hasUnsavedChanges = true
-        setStatus(message, tone: .warning)
+        let hasChanges = config != savedConfig || bookmarks != savedBookmarks
+        hasUnsavedChanges = hasChanges
+        if hasChanges {
+            pendingUnsavedStatusMessage = message
+            setStatus(message, tone: .warning)
+        } else if statusMessage == pendingUnsavedStatusMessage {
+            pendingUnsavedStatusMessage = nil
+            setStatus("", tone: .neutral)
+        }
     }
 
     private func setStatus(_ message: String, tone: StatusTone) {

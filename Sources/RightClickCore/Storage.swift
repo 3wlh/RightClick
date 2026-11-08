@@ -3,16 +3,15 @@ import Foundation
 public struct RightClickStoragePaths: Equatable, Sendable {
     public var baseURL: URL
     public var configURL: URL
+    /// 旧版配置文件路径，仅用于迁移。
+    public var legacyConfigURL: URL
     public var bookmarksURL: URL
-    public var cutClipboardURL: URL
-    public var operationLogURL: URL
 
     public init(baseURL: URL) {
         self.baseURL = baseURL
-        self.configURL = baseURL.appendingPathComponent("config.json")
+        self.configURL = baseURL.appendingPathComponent("rightclick.json")
+        self.legacyConfigURL = baseURL.appendingPathComponent("config.json")
         self.bookmarksURL = baseURL.appendingPathComponent("bookmarks.json")
-        self.cutClipboardURL = baseURL.appendingPathComponent("cut-clipboard.json")
-        self.operationLogURL = baseURL.appendingPathComponent("operation-log.jsonl")
     }
 
     public static func appGroup(identifier: String = RightClickConstants.defaultAppGroupIdentifier) throws -> RightClickStoragePaths {
@@ -91,26 +90,103 @@ public final class JSONFileStore<Value: Codable> {
     }
 }
 
+public struct PersistedConfiguration: Codable, Equatable, Sendable {
+    public static let currentSchemaVersion = 1
+
+    public var schemaVersion: Int
+    public var config: RightClickConfig
+    public var bookmarks: DirectoryBookmarkCatalog
+
+    public init(
+        config: RightClickConfig,
+        bookmarks: DirectoryBookmarkCatalog,
+        schemaVersion: Int = PersistedConfiguration.currentSchemaVersion
+    ) {
+        self.schemaVersion = schemaVersion
+        self.config = config
+        self.bookmarks = bookmarks
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion
+        case config
+        case bookmarks
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? Self.currentSchemaVersion
+        config = try container.decode(RightClickConfig.self, forKey: .config)
+        bookmarks = try container.decodeIfPresent(DirectoryBookmarkCatalog.self, forKey: .bookmarks)
+            ?? DirectoryBookmarkCatalog()
+    }
+}
+
+/// 统一 rightclick.json 的读写，并兼容旧版「config.json + bookmarks.json」分离格式。
+public enum PersistedConfigurationStore {
+    public static func load(
+        paths: RightClickStoragePaths,
+        fileManager: FileManager = .default
+    ) throws -> (document: PersistedConfiguration, isLegacy: Bool)? {
+        let existingURL = [paths.configURL, paths.legacyConfigURL]
+            .first { fileManager.fileExists(atPath: $0.path) }
+        guard let sourceURL = existingURL else {
+            return nil
+        }
+        let isLegacyFile = sourceURL != paths.configURL
+
+        if let document = try? JSONFileStore<PersistedConfiguration>(url: sourceURL, fileManager: fileManager).loadRequired() {
+            return (document, isLegacyFile)
+        }
+
+        // 旧版 config.json 顶层直接是 RightClickConfig，书签单独存放在 bookmarks.json。
+        let legacyConfig = try JSONFileStore<RightClickConfig>(url: sourceURL, fileManager: fileManager).loadRequired()
+        let legacyBookmarks = try JSONFileStore<DirectoryBookmarkCatalog>(url: paths.bookmarksURL, fileManager: fileManager)
+            .load(default: DirectoryBookmarkCatalog())
+        return (PersistedConfiguration(config: legacyConfig, bookmarks: legacyBookmarks), true)
+    }
+
+    public static func save(
+        _ document: PersistedConfiguration,
+        paths: RightClickStoragePaths,
+        fileManager: FileManager = .default
+    ) throws {
+        try JSONFileStore<PersistedConfiguration>(url: paths.configURL, fileManager: fileManager).save(document)
+
+        // 迁移完成后清理旧版遗留文件，避免出现多份数据。
+        for url in [paths.legacyConfigURL, paths.bookmarksURL] where fileManager.fileExists(atPath: url.path) {
+            try? fileManager.removeItem(at: url)
+        }
+    }
+}
+
 public protocol RightClickConfigProviding {
     func loadConfig() throws -> RightClickConfig
     func loadBookmarkCatalog() throws -> DirectoryBookmarkCatalog
 }
 
 public struct FileBackedRightClickConfigProvider: RightClickConfigProviding {
-    private let configStore: JSONFileStore<RightClickConfig>
-    private let bookmarkStore: JSONFileStore<DirectoryBookmarkCatalog>
+    private let paths: RightClickStoragePaths
+    private let fileManager: FileManager
 
-    public init(paths: RightClickStoragePaths) {
-        self.configStore = JSONFileStore<RightClickConfig>(url: paths.configURL)
-        self.bookmarkStore = JSONFileStore<DirectoryBookmarkCatalog>(url: paths.bookmarksURL)
+    public init(paths: RightClickStoragePaths, fileManager: FileManager = .default) {
+        self.paths = paths
+        self.fileManager = fileManager
     }
 
     public func loadConfig() throws -> RightClickConfig {
-        try configStore.load(default: RightClickConfig())
+        try loadDocument().config
     }
 
     public func loadBookmarkCatalog() throws -> DirectoryBookmarkCatalog {
-        try bookmarkStore.load(default: DirectoryBookmarkCatalog())
+        try loadDocument().bookmarks
+    }
+
+    private func loadDocument() throws -> PersistedConfiguration {
+        if let loaded = try PersistedConfigurationStore.load(paths: paths, fileManager: fileManager) {
+            return loaded.document
+        }
+        return PersistedConfiguration(config: RightClickConfig(), bookmarks: DirectoryBookmarkCatalog())
     }
 }
 

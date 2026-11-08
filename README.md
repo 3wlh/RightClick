@@ -84,7 +84,7 @@ RightClick 不安装特权 Helper，也不会静默请求系统权限：
 
 - 自定义分组：新建、重命名、排序、删除，菜单项可归入分组；
 - 配置导入 / 导出：导出为 JSON，导入时校验 schema 版本并刷新 Finder 菜单；
-- 配置文件保存在 `~/Library/Application Support/com.local.rightclick/config.json`。
+- 配置文件统一保存为 `~/Library/Application Support/com.local.rightclick/rightclick.json`，其中同时包含配置与常用目录书签，单一文件即可备份与迁移。
 
 ---
 
@@ -244,13 +244,14 @@ Finder
 
 ```text
 ~/Library/Application Support/com.local.rightclick
-├── config.json
-├── bookmarks.json
-├── cut-clipboard.json
-├── operation-log.jsonl
+├── rightclick.json        # 配置 + 常用目录书签（唯一配置文件）
 └── icon-cache/
     └── v1/
 ```
+
+剪切状态保存在 ActionRunner 进程内存中，不再生成额外文件。
+
+旧版本遗留的 `config.json` 和 `bookmarks.json` 会在启动时自动合并进 `rightclick.json` 并删除。
 
 ---
 

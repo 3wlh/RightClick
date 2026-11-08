@@ -239,7 +239,7 @@ struct DeveloperMenuPreviewCard: View {
         FinderPreviewRootMenu.standardContainerMenu(
             highlighting: FinderMenuItem(
                 title: "应用快捷入口",
-                systemImage: "chevron.left.forwardslash.chevron.right",
+                systemImage: "square.grid.2x2",
                 tint: SettingsTheme.accent,
                 isHighlighted: true,
                 hasSubmenu: true

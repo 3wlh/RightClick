@@ -12,8 +12,8 @@ final class ConfigurationBootstrapperTests: XCTestCase {
         XCTAssertTrue(result.didCreateConfig)
         XCTAssertTrue(result.didCreateBookmarks)
         XCTAssertTrue(FileManager.default.fileExists(atPath: paths.configURL.path))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: paths.bookmarksURL.path))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: paths.operationLogURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: paths.bookmarksURL.path))
+        XCTAssertEqual(try readDocument(paths).bookmarks, result.bookmarks)
         XCTAssertFalse(result.config.actions.isEmpty)
         XCTAssertTrue(result.config.actions.contains { $0.kind == .createFile })
         XCTAssertTrue(result.config.actions.contains { $0.kind == .openInApp })
@@ -90,14 +90,18 @@ final class ConfigurationBootstrapperTests: XCTestCase {
                 addedAt: createdAt
             )
         ])
-        try JSONFileStore<DirectoryBookmarkCatalog>(url: paths.bookmarksURL).save(existingBookmarks)
         let bootstrapper = ConfigurationBootstrapper(
             processHomeDirectory: processHome,
             realUserHomeDirectory: realHome
         )
+        try writeDocument(
+            paths,
+            config: bootstrapper.defaultConfig(bookmarks: existingBookmarks),
+            bookmarks: existingBookmarks
+        )
 
         let result = try bootstrapper.bootstrap(paths: paths)
-        let savedBookmarks = try JSONFileStore<DirectoryBookmarkCatalog>(url: paths.bookmarksURL).loadRequired()
+        let savedBookmarks = try readDocument(paths).bookmarks
 
         XCTAssertFalse(result.didCreateBookmarks)
         XCTAssertEqual(
@@ -142,12 +146,12 @@ final class ConfigurationBootstrapperTests: XCTestCase {
                 order: 999
             )
         )
-        try JSONFileStore<DirectoryBookmarkCatalog>(url: paths.bookmarksURL).save(existingBookmarks)
-        try JSONFileStore<RightClickConfig>(url: paths.configURL).save(existingConfig)
+        try writeDocument(paths, config: existingConfig, bookmarks: existingBookmarks)
 
         let result = try bootstrapper.bootstrap(paths: paths)
-        let savedBookmarks = try JSONFileStore<DirectoryBookmarkCatalog>(url: paths.bookmarksURL).loadRequired()
-        let savedConfig = try JSONFileStore<RightClickConfig>(url: paths.configURL).loadRequired()
+        let saved = try readDocument(paths)
+        let savedBookmarks = saved.bookmarks
+        let savedConfig = saved.config
 
         XCTAssertFalse(result.didCreateBookmarks)
         XCTAssertFalse(result.didCreateConfig)
@@ -175,14 +179,15 @@ final class ConfigurationBootstrapperTests: XCTestCase {
         )
         _ = try bootstrapper.bootstrap(paths: paths)
 
-        var bookmarks = try JSONFileStore<DirectoryBookmarkCatalog>(url: paths.bookmarksURL).loadRequired()
+        var document = try readDocument(paths)
+        var bookmarks = document.bookmarks
         bookmarks.bookmarks.removeAll { $0.id == "downloads" }
-        try JSONFileStore<DirectoryBookmarkCatalog>(url: paths.bookmarksURL).save(bookmarks)
-
-        var config = try JSONFileStore<RightClickConfig>(url: paths.configURL).loadRequired()
+        var config = document.config
         config.shortcutDirectoryIDs.removeAll { $0 == "downloads" }
         config.actions.removeAll { $0.payload.directoryID == "downloads" }
-        try JSONFileStore<RightClickConfig>(url: paths.configURL).save(config)
+        document.config = config
+        document.bookmarks = bookmarks
+        try writeDocument(paths, config: config, bookmarks: bookmarks)
 
         let result = try bootstrapper.bootstrap(paths: paths)
 
@@ -197,10 +202,10 @@ final class ConfigurationBootstrapperTests: XCTestCase {
         var config = RightClickConfig(actions: [])
         config.fileTemplates = []
         config.developerEntrypoints = []
-        try JSONFileStore<RightClickConfig>(url: paths.configURL).save(config)
+        try writeDocument(paths, config: config, bookmarks: DirectoryBookmarkCatalog())
 
         _ = try ConfigurationBootstrapper().bootstrap(paths: paths)
-        let savedConfig = try JSONFileStore<RightClickConfig>(url: paths.configURL).loadRequired()
+        let savedConfig = try readDocument(paths).config
 
         XCTAssertTrue(savedConfig.actions.contains { $0.id == "copy-path" && $0.kind == .copyPath })
         XCTAssertTrue(savedConfig.actions.contains { $0.id == "hide-selection" && $0.kind == .hideItems })
@@ -250,10 +255,10 @@ final class ConfigurationBootstrapperTests: XCTestCase {
             )
         ]
         config.developerEntrypoints = []
-        try JSONFileStore<RightClickConfig>(url: paths.configURL).save(config)
+        try writeDocument(paths, config: config, bookmarks: DirectoryBookmarkCatalog())
 
         _ = try ConfigurationBootstrapper().bootstrap(paths: paths)
-        let savedConfig = try JSONFileStore<RightClickConfig>(url: paths.configURL).loadRequired()
+        let savedConfig = try readDocument(paths).config
 
         XCTAssertEqual(savedConfig.fileTemplates.map(\.id), ["template-custom"])
         XCTAssertFalse(savedConfig.actions.contains { $0.payload.templateID == "template-gitignore" })
@@ -271,10 +276,10 @@ final class ConfigurationBootstrapperTests: XCTestCase {
             FileTemplate(id: "template-json", title: "JSON", defaultFileName: "Untitled.json", contents: "{\n  \n}\n")
         ]
         config.developerEntrypoints = []
-        try JSONFileStore<RightClickConfig>(url: paths.configURL).save(config)
+        try writeDocument(paths, config: config, bookmarks: DirectoryBookmarkCatalog())
 
         _ = try ConfigurationBootstrapper().bootstrap(paths: paths)
-        let savedConfig = try JSONFileStore<RightClickConfig>(url: paths.configURL).loadRequired()
+        let savedConfig = try readDocument(paths).config
 
         XCTAssertEqual(savedConfig.fileTemplates.first { $0.id == "template-txt" }?.defaultFileName, "未命名.txt")
         XCTAssertEqual(savedConfig.fileTemplates.first { $0.id == "template-md" }?.defaultFileName, "未命名.md")
@@ -311,10 +316,10 @@ final class ConfigurationBootstrapperTests: XCTestCase {
             )
         ]
         config.submenuGroupOrder = ["custom-developer-shortcut", MenuGroup.fileOperations.rawValue]
-        try JSONFileStore<RightClickConfig>(url: paths.configURL).save(config)
+        try writeDocument(paths, config: config, bookmarks: DirectoryBookmarkCatalog())
 
         _ = try ConfigurationBootstrapper().bootstrap(paths: paths)
-        let savedConfig = try JSONFileStore<RightClickConfig>(url: paths.configURL).loadRequired()
+        let savedConfig = try readDocument(paths).config
 
         XCTAssertTrue(savedConfig.customGroups.isEmpty)
         XCTAssertEqual(savedConfig.submenuGroupOrder.first, MenuGroup.developerTools.rawValue)
@@ -411,10 +416,25 @@ final class ConfigurationBootstrapperTests: XCTestCase {
                 targetMode: .currentDirectory
             )
         }
-        try JSONFileStore<RightClickConfig>(url: paths.configURL).save(config)
+        try writeDocument(paths, config: config, bookmarks: DirectoryBookmarkCatalog())
 
         let result = try ConfigurationBootstrapper().bootstrap(paths: paths)
 
         XCTAssertTrue(result.config.developerEntrypoints.allSatisfy { $0.targetMode == .dynamic })
+    }
+
+    private func writeDocument(
+        _ paths: RightClickStoragePaths,
+        config: RightClickConfig,
+        bookmarks: DirectoryBookmarkCatalog
+    ) throws {
+        try PersistedConfigurationStore.save(
+            PersistedConfiguration(config: config, bookmarks: bookmarks),
+            paths: paths
+        )
+    }
+
+    private func readDocument(_ paths: RightClickStoragePaths) throws -> PersistedConfiguration {
+        try XCTUnwrap(PersistedConfigurationStore.load(paths: paths)?.document)
     }
 }

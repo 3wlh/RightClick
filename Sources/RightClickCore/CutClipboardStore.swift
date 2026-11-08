@@ -16,26 +16,6 @@ public protocol CutClipboardStoring {
     func clear() throws
 }
 
-public final class FileBackedCutClipboardStore: CutClipboardStoring {
-    private let store: JSONFileStore<CutClipboardRecord?>
-
-    public init(url: URL) {
-        self.store = JSONFileStore<CutClipboardRecord?>(url: url)
-    }
-
-    public func load() throws -> CutClipboardRecord? {
-        try store.load(default: nil)
-    }
-
-    public func save(_ record: CutClipboardRecord) throws {
-        try store.save(record)
-    }
-
-    public func clear() throws {
-        try store.save(nil)
-    }
-}
-
 public final class InMemoryCutClipboardStore: CutClipboardStoring {
     public private(set) var record: CutClipboardRecord?
 

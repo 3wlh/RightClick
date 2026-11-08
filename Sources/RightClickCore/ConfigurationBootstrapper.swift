@@ -48,34 +48,34 @@ public struct ConfigurationBootstrapper {
     }
 
     public func bootstrap(paths: RightClickStoragePaths = .defaultForCurrentProcess()) throws -> ConfigurationBootstrapResult {
-        let configStore = JSONFileStore<RightClickConfig>(url: paths.configURL, fileManager: fileManager)
-        let bookmarkStore = JSONFileStore<DirectoryBookmarkCatalog>(url: paths.bookmarksURL, fileManager: fileManager)
-        let logStore = JSONLineOperationLog(url: paths.operationLogURL, fileManager: fileManager)
-
         let defaultBookmarks = defaultBookmarks()
-        let didCreateBookmarks = !fileManager.fileExists(atPath: paths.bookmarksURL.path)
-        let originalBookmarks = try bookmarkStore.load(default: defaultBookmarks)
+        let didCreateConfig = !fileManager.fileExists(atPath: paths.configURL.path)
+            && !fileManager.fileExists(atPath: paths.legacyConfigURL.path)
+        let loaded = try PersistedConfigurationStore.load(paths: paths, fileManager: fileManager)
+
+        let originalBookmarks = loaded?.document.bookmarks ?? defaultBookmarks
         let sanitizedBookmarks = sanitizeBookmarks(originalBookmarks)
         // 默认目录只在首次初始化或旧版本迁移时补齐，之后尊重用户删除。
-        let shouldInjectDefaultBookmarks = didCreateBookmarks || !fileManager.fileExists(
+        let shouldInjectDefaultBookmarks = didCreateConfig || !fileManager.fileExists(
             atPath: defaultDirectoryBootstrapMarkerURL(for: paths).path
         )
         let bookmarks = shouldInjectDefaultBookmarks
             ? repairDefaultBookmarks(sanitizedBookmarks, defaults: defaultBookmarks)
             : sanitizedBookmarks
-        if didCreateBookmarks || bookmarks != originalBookmarks {
-            try bookmarkStore.save(bookmarks)
-        }
 
-        let didCreateConfig = !fileManager.fileExists(atPath: paths.configURL.path)
-        let originalConfig = try configStore.load(default: defaultConfig(bookmarks: bookmarks))
+        let originalConfig = loaded?.document.config ?? defaultConfig(bookmarks: bookmarks)
         let config = repairDefaultConfig(
             originalConfig,
             bookmarks: bookmarks,
             defaultBookmarkIDs: defaultBookmarks.bookmarks.map(\.id)
         )
-        if didCreateConfig || config != originalConfig {
-            try configStore.save(config)
+        let document = PersistedConfiguration(config: config, bookmarks: bookmarks)
+        let needsSave = loaded == nil
+            || loaded?.isLegacy == true
+            || config != loaded?.document.config
+            || bookmarks != loaded?.document.bookmarks
+        if needsSave {
+            try PersistedConfigurationStore.save(document, paths: paths, fileManager: fileManager)
         }
 
         if shouldInjectDefaultBookmarks {
@@ -85,24 +85,12 @@ public struct ConfigurationBootstrapper {
             )
         }
 
-        if !fileManager.fileExists(atPath: paths.operationLogURL.path) {
-            try logStore.append(
-                OperationRecord(
-                    actionID: "bootstrap",
-                    kind: .unsupported,
-                    status: .success,
-                    destinationPaths: [paths.baseURL.path],
-                    message: "RightClick 默认配置已自动注入"
-                )
-            )
-        }
-
         return ConfigurationBootstrapResult(
             paths: paths,
             config: config,
             bookmarks: bookmarks,
             didCreateConfig: didCreateConfig,
-            didCreateBookmarks: didCreateBookmarks
+            didCreateBookmarks: loaded?.isLegacy == true || didCreateConfig
         )
     }
 

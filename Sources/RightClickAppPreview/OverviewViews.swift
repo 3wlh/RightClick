@@ -34,7 +34,7 @@ struct OnboardingView: View {
                     }
 
                     OverviewFeatureRow(
-                        systemImage: "chevron.left.forwardslash.chevron.right",
+                        systemImage: "square.grid.2x2",
                         title: "应用快捷入口",
                         meta: "\(enabledDeveloperCount) 个已启用入口"
                     ) {

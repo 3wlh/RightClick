@@ -9,6 +9,9 @@ import UniformTypeIdentifiers
 // FinderSync 由系统和 Dispatch 回调驱动；状态访问约束在主线程与专用串行队列中。
 final class FinderSyncController: FIFinderSync, @unchecked Sendable {
     private let menuBuilder = MenuBuilder()
+    /// 记录是否执行过剪切，用于决定「粘贴到此处」是否出现在菜单里。
+    private var hasCutItems = false
+    private let cutStateLock = NSLock()
     private let paths: RightClickStoragePaths
     private let configProvider: RightClickConfigProviding
     private let xpcClient = RightClickActionRunnerXPCClient()
@@ -89,7 +92,10 @@ final class FinderSyncController: FIFinderSync, @unchecked Sendable {
             return nil
         }
 
-        let config = cachedConfig
+        var config = cachedConfig
+        if !currentHasCutItems() {
+            config.actions.removeAll { $0.kind == .paste }
+        }
         let bookmarks = cachedBookmarks
 
         pendingMenuActions.removeAll()
@@ -414,30 +420,43 @@ final class FinderSyncController: FIFinderSync, @unchecked Sendable {
             switch result {
             case .success(let actionResult):
                 NSLog("RightClick ActionRunner result for \(request.actionID): \(actionResult.status.rawValue) \(actionResult.message)")
+                self.updateCutState(actionKind: actionKind, result: actionResult)
                 if actionResult.status != .success {
                     self.publishActionFailure(request: request, actionKind: actionKind, message: actionResult.message)
                 }
             case .failure(let error):
                 NSLog("RightClick ActionRunner failed for \(request.actionID): \(error.localizedDescription)")
-                self.appendActionFailureRecord(request: request, actionKind: actionKind, message: error.localizedDescription)
                 self.publishActionFailure(request: request, actionKind: actionKind, message: error.localizedDescription)
             }
         }
     }
 
-    private func appendActionFailureRecord(request: ActionRequest, actionKind: ActionKind?, message: String) {
-        let record = OperationRecord(
-            actionID: request.actionID,
-            kind: actionKind.map(OperationKind.init(actionKind:)) ?? .unsupported,
-            status: .failure,
-            sourcePaths: request.context.selectedItems.map(\.path),
-            destinationPaths: [request.context.targetDirectory.path],
-            message: message
-        )
-        do {
-            try JSONLineOperationLog(url: paths.operationLogURL).append(record)
-        } catch {
-            NSLog("RightClick failed to persist XPC failure history for \(request.actionID): \(error.localizedDescription)")
+    private func currentHasCutItems() -> Bool {
+        cutStateLock.lock()
+        defer { cutStateLock.unlock() }
+        return hasCutItems
+    }
+
+    private func setHasCutItems(_ value: Bool) {
+        cutStateLock.lock()
+        hasCutItems = value
+        cutStateLock.unlock()
+    }
+
+    /// 剪切成功后显示「粘贴到此处」；粘贴完成后再次隐藏。
+    private func updateCutState(actionKind: ActionKind?, result: ActionResult) {
+        guard let actionKind, result.status == .success else {
+            return
+        }
+        switch actionKind {
+        case .cut:
+            setHasCutItems(true)
+        case .paste:
+            if result.remainingURLs.isEmpty {
+                setHasCutItems(false)
+            }
+        default:
+            break
         }
     }
 
@@ -484,7 +503,7 @@ final class FinderSyncController: FIFinderSync, @unchecked Sendable {
         case .createFile:
             return .systemSymbol("doc.badge.plus")
         case .developerEntrypoints:
-            return .systemSymbol("chevron.left.forwardslash.chevron.right")
+            return .systemSymbol("square.grid.2x2")
         case .developerTools:
             return .systemSymbol("chevron.left.forwardslash.chevron.right")
         case .fileOperations:
@@ -724,7 +743,8 @@ final class FinderSyncController: FIFinderSync, @unchecked Sendable {
 
     private func persistedIconCacheFileName(forKey key: String) -> String {
         let digest = SHA256.hash(data: Data(key.utf8))
-        return digest.map { String(format: "%02x", $0) }.joined()
+        // 取前 8 字节（16 位十六进制），几百个图标键的碰撞概率可忽略。
+        return digest.prefix(8).map { String(format: "%02x", $0) }.joined()
     }
 
     private func cachePreparedMenuIcon(_ image: NSImage, forKey key: String) {

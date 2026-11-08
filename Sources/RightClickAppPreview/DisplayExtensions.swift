@@ -183,7 +183,7 @@ extension MenuGroup {
         case .createFile:
             return .systemSymbol("doc.badge.plus")
         case .developerEntrypoints:
-            return .systemSymbol("chevron.left.forwardslash.chevron.right")
+            return .systemSymbol("square.grid.2x2")
         case .developerTools:
             return .systemSymbol("chevron.left.forwardslash.chevron.right")
         case .fileOperations:
@@ -274,72 +274,6 @@ extension DeveloperTargetMode {
             return "优先把第一个选中项目传给目标应用，没有选中项时回退当前目录。"
         case .selectedItemDirectory:
             return "优先把第一个选中项目所在目录传给目标应用，没有选中项时回退当前目录。"
-        }
-    }
-}
-
-extension OperationKind {
-    var displayName: String {
-        switch self {
-        case .openDirectory:
-            return "打开目录"
-        case .move:
-            return "移动"
-        case .copy:
-            return "复制"
-        case .cut:
-            return "剪切"
-        case .paste:
-            return "粘贴"
-        case .createFile:
-            return "新建文件"
-        case .openInApp:
-            return "开发者入口"
-        case .copyPath:
-            return "拷贝路径"
-        case .hide:
-            return "隐藏"
-        case .unhide:
-            return "取消隐藏"
-        case .delete:
-            return "永久删除"
-        case .unsupported:
-            return "未支持"
-        }
-    }
-}
-
-extension OperationRecordStatus {
-    var displayName: String {
-        switch self {
-        case .success:
-            return "成功"
-        case .failure:
-            return "失败"
-        case .cancelled:
-            return "取消"
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .success:
-            return "checkmark.circle"
-        case .failure:
-            return "xmark.octagon"
-        case .cancelled:
-            return "minus.circle"
-        }
-    }
-
-    var color: Color {
-        switch self {
-        case .success:
-            return .primary
-        case .failure:
-            return .red
-        case .cancelled:
-            return .orange
         }
     }
 }

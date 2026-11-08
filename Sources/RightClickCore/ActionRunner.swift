@@ -32,7 +32,6 @@ public enum ActionRunnerError: Error, Equatable, LocalizedError {
 public final class ActionRunner {
     private let configProvider: RightClickConfigProviding
     private let fileService: FileOperationService
-    private let operationLog: OperationLogging
     private let cutClipboard: CutClipboardStoring
     private let pathClipboard: PathClipboardWriting
     private let urlOpener: URLOpening
@@ -42,7 +41,6 @@ public final class ActionRunner {
     public init(
         configProvider: RightClickConfigProviding,
         fileService: FileOperationService = FileOperationService(),
-        operationLog: OperationLogging,
         cutClipboard: CutClipboardStoring,
         pathClipboard: PathClipboardWriting = InMemoryPathClipboard(),
         urlOpener: URLOpening,
@@ -51,7 +49,6 @@ public final class ActionRunner {
     ) {
         self.configProvider = configProvider
         self.fileService = fileService
-        self.operationLog = operationLog
         self.cutClipboard = cutClipboard
         self.pathClipboard = pathClipboard
         self.urlOpener = urlOpener
@@ -60,13 +57,11 @@ public final class ActionRunner {
     }
 
     public func run(_ request: ActionRequest) -> ActionResult {
-        var selectedAction: RightClickAction?
         do {
             let config = try configProvider.loadConfig()
             guard let action = config.actions.first(where: { $0.id == request.actionID }) else {
                 throw ActionRunnerError.actionNotFound(request.actionID)
             }
-            selectedAction = action
             let bookmarks = try configProvider.loadBookmarkCatalog()
 
             let bookmarkAccess = try AuthorizedBookmarkAccess(
@@ -74,38 +69,19 @@ public final class ActionRunner {
                 ids: try bookmarkIDs(for: action),
                 resolver: bookmarkResolver
             )
-            var result = try execute(
+            return try execute(
                 action,
                 config: config,
                 bookmarkAccess: bookmarkAccess,
                 request: request
             )
-            do {
-                try log(action: action, request: request, result: result)
-            } catch {
-                // 文件动作已经执行，历史落盘错误不能抹掉完成项和待重试项。
-                result.status = .failure
-                result.message += "\n操作历史保存失败：\(error.localizedDescription)"
-            }
-            return result
         } catch {
             let status: ActionResultStatus = (error as? FileOperationError) == .cancelled ? .cancelled : .failure
-            let result = ActionResult(
+            return ActionResult(
                 requestID: request.id,
                 status: status,
                 message: FullDiskAccessAdvisor.userFacingMessage(for: error)
             )
-            try? operationLog.append(
-                OperationRecord(
-                    actionID: request.actionID,
-                    kind: selectedAction.map { OperationKind(actionKind: $0.kind) } ?? .unsupported,
-                    status: recordStatus(for: status),
-                    sourcePaths: request.context.selectedItems.map(\.path),
-                    destinationPaths: [request.context.targetDirectory.path],
-                    message: result.message
-                )
-            )
-            return result
         }
     }
 
@@ -303,23 +279,6 @@ public final class ActionRunner {
         return item
     }
 
-    private func log(action: RightClickAction, request: ActionRequest, result: ActionResult) throws {
-        var sourcePaths = request.context.selectedItems.map(\.path)
-        for path in result.remainingURLs.map(\.path) where !sourcePaths.contains(path) {
-            sourcePaths.append(path)
-        }
-        try operationLog.append(
-            OperationRecord(
-                actionID: action.id,
-                kind: operationKind(for: action.kind),
-                status: recordStatus(for: result.status),
-                sourcePaths: sourcePaths,
-                destinationPaths: result.affectedURLs.map(\.path),
-                message: result.message
-            )
-        )
-    }
-
     private func actionResult(
         requestID: UUID,
         batch: FileOperationBatchResult,
@@ -349,20 +308,5 @@ public final class ActionRunner {
             affectedURLs: batch.completed.map(\.destinationURL),
             remainingURLs: batch.remainingSourceURLs
         )
-    }
-
-    private func operationKind(for actionKind: ActionKind) -> OperationKind {
-        OperationKind(actionKind: actionKind)
-    }
-
-    private func recordStatus(for resultStatus: ActionResultStatus) -> OperationRecordStatus {
-        switch resultStatus {
-        case .success:
-            return .success
-        case .failure:
-            return .failure
-        case .cancelled:
-            return .cancelled
-        }
     }
 }

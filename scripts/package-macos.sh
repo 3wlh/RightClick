@@ -141,7 +141,7 @@ write_app_info_plist() {
 <plist version="1.0">
 <dict>
   <key>CFBundleDevelopmentRegion</key>
-  <string>en</string>
+  <string>zh-Hans</string>
   <key>CFBundleExecutable</key>
   <string>$APP_NAME</string>
   <key>CFBundleIdentifier</key>
@@ -179,7 +179,7 @@ write_xpc_info_plist() {
 <plist version="1.0">
 <dict>
   <key>CFBundleDevelopmentRegion</key>
-  <string>en</string>
+  <string>zh-Hans</string>
   <key>CFBundleExecutable</key>
   <string>RightClickActionRunner</string>
   <key>CFBundleIdentifier</key>
@@ -214,9 +214,9 @@ write_finder_extension_info_plist() {
 <plist version="1.0">
 <dict>
   <key>CFBundleDevelopmentRegion</key>
-  <string>en</string>
+  <string>zh-Hans</string>
   <key>CFBundleDisplayName</key>
-  <string>$APP_NAME Finder Extension</string>
+  <string>$APP_NAME 访达扩展</string>
   <key>CFBundleExecutable</key>
   <string>RightClickFinderExtension</string>
   <key>CFBundleIdentifier</key>
