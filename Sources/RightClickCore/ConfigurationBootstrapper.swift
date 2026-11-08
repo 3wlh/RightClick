@@ -154,6 +154,7 @@ public struct ConfigurationBootstrapper {
         appendMissingFileOperationActions(to: &repaired.actions)
         enablePasteOnSelection(in: &repaired.actions)
         movePasteIntoFileOperationSubmenu(in: &repaired.actions)
+        moveCopyPathToFileOperationFront(in: &repaired.actions)
         migrateDefaultTemplateNames(in: &repaired.fileTemplates)
         removeLegacyDefaultFileTemplates(from: &repaired.fileTemplates, actions: &repaired.actions)
         removeLegacyDeveloperEntrypoints(from: &repaired.developerEntrypoints, actions: &repaired.actions)
@@ -180,6 +181,42 @@ public struct ConfigurationBootstrapper {
         for index in actions.indices where actions[index].kind == .paste {
             actions[index].placement = .submenu
             actions[index].group = .fileOperations
+        }
+    }
+
+    /// 「拷贝路径」原来排在「粘贴到此处」之后，现调整为「文件操作」分组的第一项。
+    /// 只有顺序仍等于旧默认顺序时才迁移，避免覆盖用户手工调整过的排序。
+    private func moveCopyPathToFileOperationFront(in actions: inout [RightClickAction]) {
+        let previousDefaultIDs = [
+            "paste-here",
+            "cut-selection",
+            "copy-path",
+            "hide-selection",
+            "unhide-selection",
+            "delete-permanently"
+        ]
+        let newDefaultIDs = [
+            "copy-path",
+            "paste-here",
+            "cut-selection",
+            "hide-selection",
+            "unhide-selection",
+            "delete-permanently"
+        ]
+
+        let fileOperationActions = actions
+            .filter { $0.group == .fileOperations && $0.placement == .submenu }
+            .sorted { $0.order < $1.order }
+        guard fileOperationActions.map(\.id) == previousDefaultIDs else {
+            return
+        }
+
+        let orders = fileOperationActions.map(\.order)
+        for (index, id) in newDefaultIDs.enumerated() {
+            guard let actionIndex = actions.firstIndex(where: { $0.id == id }) else {
+                continue
+            }
+            actions[actionIndex].order = orders[index]
         }
     }
 

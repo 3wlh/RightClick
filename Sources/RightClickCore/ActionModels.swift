@@ -309,28 +309,28 @@ public struct RightClickConfig: Codable, Equatable, Sendable {
     public static func defaultFileOperationActions(startingAt order: Int = 10) -> [RightClickAction] {
         [
             RightClickAction(
+                id: "copy-path",
+                title: "拷贝路径",
+                kind: .copyPath,
+                visibility: [.selection, .container],
+                placement: .submenu,
+                group: .fileOperations,
+                order: order
+            ),
+            RightClickAction(
                 id: "paste-here",
                 title: "粘贴到此处",
                 kind: .paste,
                 visibility: [.container, .selection],
                 placement: .submenu,
                 group: .fileOperations,
-                order: order
+                order: order + 10
             ),
             RightClickAction(
                 id: "cut-selection",
                 title: "剪切",
                 kind: .cut,
                 visibility: [.selection],
-                placement: .submenu,
-                group: .fileOperations,
-                order: order + 10
-            ),
-            RightClickAction(
-                id: "copy-path",
-                title: "拷贝路径",
-                kind: .copyPath,
-                visibility: [.selection, .container],
                 placement: .submenu,
                 group: .fileOperations,
                 order: order + 20
