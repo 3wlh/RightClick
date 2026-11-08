@@ -16,10 +16,10 @@ on:
           - release
           - debug
       prerelease:
-        description: 标记为 Pre-release（日期版本建议开启，正式版本关闭）
+        description: 标记为 Pre-release（默认发布正式版）
         required: true
         type: boolean
-        default: true
+        default: false
 
 permissions:
   contents: read
