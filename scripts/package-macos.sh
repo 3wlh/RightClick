@@ -254,7 +254,6 @@ PLIST
 write_sandbox_entitlements_plist() {
   local plist_path="$1"
   local include_network_client="$2"
-  local absolute_path_exception="$3"
 
   cat > "$plist_path" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -284,13 +283,6 @@ PLIST
 </dict>
 </plist>
 PLIST
-
-  # 配置目录被迁移到其它卷（例如外置盘）时，沙盒需要额外的绝对路径写权限。
-  if [[ -n "$absolute_path_exception" ]]; then
-    /usr/libexec/PlistBuddy -c "Delete :com.apple.security.temporary-exception.files.absolute-path.read-write" "$plist_path" >/dev/null 2>&1 || true
-    /usr/libexec/PlistBuddy -c "Add :com.apple.security.temporary-exception.files.absolute-path.read-write array" "$plist_path"
-    /usr/libexec/PlistBuddy -c "Add :com.apple.security.temporary-exception.files.absolute-path.read-write:0 string $absolute_path_exception/" "$plist_path"
-  fi
 }
 
 write_xpc_entitlements_plist() {
@@ -789,19 +781,8 @@ Developer ID signed or notarized.
 Minimum macOS: ${RIGHTCLICKPRO_MACOS_DEPLOYMENT_TARGET}
 NOTES
 
-  # 解析配置目录的真实位置：若被符号链接迁移到其它卷，需为沙盒补充绝对路径例外。
-  local config_dir_link="$HOME/Library/Application Support/$BUNDLE_IDENTIFIER"
-  local config_dir_absolute_exception=""
-  if [[ -L "$config_dir_link" ]]; then
-    local resolved_config_dir
-    resolved_config_dir="$(readlink "$config_dir_link")"
-    if [[ "$resolved_config_dir" == /* && -d "$resolved_config_dir" ]]; then
-      config_dir_absolute_exception="$resolved_config_dir"
-    fi
-  fi
-
-  write_sandbox_entitlements_plist "$app_entitlements_path" 1 "$config_dir_absolute_exception"
-  write_sandbox_entitlements_plist "$finder_entitlements_path" 0 "$config_dir_absolute_exception"
+  write_sandbox_entitlements_plist "$app_entitlements_path" 1
+  write_sandbox_entitlements_plist "$finder_entitlements_path" 0
   write_xpc_entitlements_plist "$xpc_entitlements_path"
   codesign_if_available "$app_entitlements_path" "$finder_entitlements_path" "$xpc_entitlements_path" "$app_path" "$xpc_path" "$appex_path" "$appex_xpc_path"
   validate_preview_bundle "$app_path" "$xpc_path" "$appex_path" "$appex_xpc_path"
