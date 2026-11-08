@@ -4,10 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Test package version
-        required: true
+        description: 包版本（留空则使用当天日期，如 26.11.08；tag 触发时使用 tag）
+        required: false
         type: string
-        default: 0.1.0-test.1
       configuration:
         description: Swift/Xcode build configuration
         required: true
@@ -58,6 +57,15 @@ jobs:
           xcodebuild -version
           swift --version
 
+      - name: Resolve version
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            exit 0
+          fi
+          if [[ -z "${RIGHTCLICKPRO_VERSION}" ]]; then
+            echo "RIGHTCLICKPRO_VERSION=$(TZ=Asia/Shanghai date +%y.%m.%d)" >> "$GITHUB_ENV"
+          fi
+
       - name: Run Swift checks
         run: scripts/ci-swift-check.sh "$BUILD_CONFIGURATION"
 
@@ -67,7 +75,7 @@ jobs:
       - name: Upload packaged artifact
         uses: actions/upload-artifact@v7
         with:
-          name: RightClick-${{ env.ARTIFACT_SUFFIX }}-${{ inputs.version || github.ref_name }}
+          name: RightClick-${{ env.ARTIFACT_SUFFIX }}-${{ env.RIGHTCLICKPRO_VERSION || github.ref_name }}
           path: dist/*.dmg
           if-no-files-found: error
           compression-level: 0
