@@ -19,13 +19,6 @@ on:
   push:
     tags:
       - "v*"
-  pull_request:
-    paths:
-      - ".github/workflows/package-macos.yml"
-      - "Package.swift"
-      - "Sources/**"
-      - "Tests/**"
-      - "scripts/**"
 
 permissions:
   contents: read
