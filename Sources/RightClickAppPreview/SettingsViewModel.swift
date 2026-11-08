@@ -452,7 +452,14 @@ final class SettingsViewModel: NSObject, ObservableObject {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             let data = try encoder.encode(document)
-            try data.write(to: url, options: [.atomic])
+            // 保存面板只授权选中的文件本身，原子写会在同目录创建临时文件而被沙盒拒绝。
+            let accessing = url.startAccessingSecurityScopedResource()
+            defer {
+                if accessing {
+                    url.stopAccessingSecurityScopedResource()
+                }
+            }
+            try data.write(to: url)
             setStatus("配置已导出：\(url.lastPathComponent)", tone: .success)
         } catch {
             setStatus("导出失败：\(error.localizedDescription)", tone: .error)
