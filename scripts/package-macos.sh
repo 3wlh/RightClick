@@ -709,7 +709,7 @@ smoke_test_dmg() {
 package_preview_dmg() {
   local app_path="$1"
   local dmg_root="$PWD/$DIST_DIR/dmg-root"
-  local dmg_path="$PWD/$DIST_DIR/$APP_NAME-$(version_name)-$ARTIFACT_SUFFIX-preview.dmg"
+  local dmg_path="$PWD/$DIST_DIR/$APP_NAME-$ARTIFACT_SUFFIX-preview.dmg"
 
   if ! command -v hdiutil >/dev/null 2>&1; then
     echo "hdiutil is required to build a DMG." >&2

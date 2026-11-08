@@ -853,8 +853,8 @@ return .application(appURL: terminalURL, targetURL: selectedFileURL.deletingLast
 
 #### 5. Good/Base/Bad Cases
 
-- Good: tag `v1.2.3` uploads `RightClick-1.2.3-<arch>-preview.dmg` containing `RightClickFinderExtension.appex` as an `_NSExtensionMain` executable inside the app bundle.
-- Good: `RIGHTCLICKPRO_PACKAGE_DMG=1 scripts/package-macos.sh debug` produces zip plus `RightClick-<version>-<arch>-preview.dmg`, then mounts the DMG and verifies the app, Applications alias, and README.
+- Good: tag `v1.2.3` uploads `RightClick-<arch>-preview.dmg` containing `RightClickFinderExtension.appex` as an `_NSExtensionMain` executable inside the app bundle.
+- Good: `RIGHTCLICKPRO_PACKAGE_DMG=1 scripts/package-macos.sh debug` produces zip plus `RightClick-<arch>-preview.dmg`, then mounts the DMG and verifies the app, Applications alias, and README.
 - Good: Finder starts the extension before the app has opened; the extension installs fallback config, assigns `/` and mounted volume roots as the sync roots, and repairs config/bookmarks asynchronously.
 - Good: `~/Code` is configured as a shortcut directory; Finder Sync still registers `/` and mounted volume roots as the sync roots and returns eligible menus globally.
 - Good: an external volume is mounted at `/Volumes/DataDisk`; the extension observes that volume root and shows the context menu inside it. Unmounting or renaming the volume re-registers the remaining roots.
@@ -876,7 +876,7 @@ return .application(appURL: terminalURL, targetURL: selectedFileURL.deletingLast
 - Bad: the sandboxed menu-bar app directly runs `/usr/bin/killall Finder`, then reports failure even though the embedded unsandboxed XPC service could perform the repair.
 - Bad: every normal launch restarts Finder even when the same bundled extension was already repaired successfully.
 - Bad: workflow upload glob includes both `.zip` and `.dmg`, so one Actions artifact contains multiple package formats.
-- Bad: developer uploads `dist/RightClick-0.1.1-arm64-preview.dmg` from a local machine as the primary GitHub Release asset when Actions can build the tag.
+- Bad: developer uploads `dist/RightClick-arm64-preview.dmg` from a local machine as the primary GitHub Release asset when Actions can build it.
 - Bad: `RIGHTCLICKPRO_XCODE_PROJECT` set without `RIGHTCLICKPRO_XCODE_SCHEME` silently falls back to preview bundling.
 - Bad: preview bundle contains `Contents/PlugIns/RightClickFinderExtension.appex` but the appex executable is a `DYLIB`.
 
