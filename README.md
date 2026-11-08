@@ -7,9 +7,9 @@
 
 把常用目录、文件操作和开发工具放进 macOS Finder 右键菜单。RightClick 提供原生设置界面，支持跟随系统、浅色和深色主题。
 
-[下载最新版本](https://github.com/3wlh/RightClick/releases/latest) · [v0.1.0 更新说明](https://github.com/3wlh/RightClick/releases/tag/v0.1.0)
+[下载最新版本](https://github.com/3wlh/RightClick/releases/latest) · [更新说明](https://github.com/3wlh/RightClick/releases/tag/v0.1.0)
 
-> 当前版本：v0.1.0 预览版，支持 macOS 14 及以上。提供 Apple Silicon 和 Intel DMG，采用 ad-hoc 签名，尚未接入 Developer ID 签名与 notarization 公证。
+> 当前版本：v{{ inputs.version }} 预览版，支持 macOS 14 及以上。提供 Apple Silicon 和 Intel DMG，采用 ad-hoc 签名，尚未接入 Developer ID 签名与 notarization 公证。
 
 功能：Finder 右键菜单 · 常用目录快捷入口 · 文件剪切/粘贴/移动/复制 · 拷贝路径 · 隐藏/取消隐藏 · 直接删除 · 新建文件模板 · 开发者工具入口 · 操作历史 · 登录时自动启动 · Finder Extension 修复
 
@@ -94,7 +94,7 @@ RightClick 不安装特权 Helper，也不会静默请求系统权限：
 
 前往 [最新 Release](https://github.com/3wlh/RightClick/releases/latest) 下载预览包，按 Mac 芯片选择：
 
-| 设备 | v0.1.0 安装包 |
+| 设备 | 安装包 |
 | --- | --- |
 | Apple Silicon（M 系列） | [arm64 DMG](https://github.com/3wlh/RightClick/releases/download/v0.1.0/RightClick-0.1.0-arm64-preview.dmg) |
 | Intel Mac | [x86_64 DMG](https://github.com/3wlh/RightClick/releases/download/v0.1.0/RightClick-0.1.0-x86_64-preview.dmg) |
