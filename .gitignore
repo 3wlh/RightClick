@@ -1,0 +1,13 @@
+.build/
+.swiftpm/
+DerivedData/
+dist/
+dist-*/
+*.xcresult
+*.xcarchive
+*.dSYM/
+*.zip
+.DS_Store
+
+.codegraph/
+tmp/

@@ -1,0 +1,206 @@
+import Foundation
+
+public enum MenuIconDescriptor: Equatable, Sendable {
+    case systemSymbol(String)
+    case appBundleIdentifier(String)
+    case filePath(String)
+    case fileExtension(String)
+    case folder
+}
+
+public extension MenuIconDescriptor {
+    var requiresExternalResourceLookup: Bool {
+        switch self {
+        case .appBundleIdentifier, .filePath:
+            return true
+        case .systemSymbol, .fileExtension, .folder:
+            return false
+        }
+    }
+
+    var lightweightFallback: MenuIconDescriptor {
+        switch self {
+        case .appBundleIdentifier:
+            return .systemSymbol("app")
+        case .filePath(let path):
+            let fileExtension = URL(fileURLWithPath: path).pathExtension
+            return fileExtension.isEmpty ? .folder : .fileExtension(fileExtension)
+        case .systemSymbol, .fileExtension, .folder:
+            return self
+        }
+    }
+}
+
+public enum MenuIconResolver {
+    public static func icon(
+        for action: RightClickAction,
+        config: RightClickConfig,
+        bookmarks: DirectoryBookmarkCatalog = DirectoryBookmarkCatalog()
+    ) -> MenuIconDescriptor {
+        switch action.kind {
+        case .openDirectory, .moveToDirectory, .copyToDirectory:
+            if
+                let directoryID = action.payload.directoryID,
+                let bookmark = bookmarks.bookmark(id: directoryID)
+            {
+                return .filePath(bookmark.path)
+            }
+            return .folder
+        case .cut:
+            return .systemSymbol("scissors")
+        case .paste:
+            return .systemSymbol("doc.on.clipboard")
+        case .createFile:
+            if
+                let templateID = action.payload.templateID,
+                let template = config.fileTemplates.first(where: { $0.id == templateID })
+            {
+                let fileExtension = URL(fileURLWithPath: template.defaultFileName).pathExtension
+                return fileExtension.isEmpty ? .systemSymbol("doc") : .fileExtension(fileExtension)
+            }
+            return .systemSymbol("doc.badge.plus")
+        case .openInApp:
+            if
+                let entrypointID = action.payload.developerEntrypointID,
+                let entrypoint = config.developerEntrypoints.first(where: { $0.id == entrypointID })
+            {
+                if let iconSymbol = entrypoint.iconSymbol, !iconSymbol.isEmpty {
+                    return .systemSymbol(iconSymbol)
+                }
+                return .appBundleIdentifier(entrypoint.bundleIdentifier)
+            }
+            return .systemSymbol("app")
+        case .copyPath:
+            return .systemSymbol("link")
+        case .hideItems:
+            return .systemSymbol("eye.slash")
+        case .unhideItems:
+            return .systemSymbol("eye")
+        case .deletePermanently:
+            return .systemSymbol("trash.slash")
+        case .undoOperation:
+            return .systemSymbol("arrow.uturn.backward")
+        }
+    }
+}
+
+public struct MenuItemPresentation: Equatable, Identifiable, Sendable {
+    public var id: String
+    public var title: String
+    public var actionID: String
+    public var group: MenuGroup?
+    public var customGroupID: String?
+    public var order: Int
+    public var icon: MenuIconDescriptor?
+
+    public init(
+        id: String,
+        title: String,
+        actionID: String,
+        group: MenuGroup?,
+        customGroupID: String? = nil,
+        order: Int,
+        icon: MenuIconDescriptor? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.actionID = actionID
+        self.group = group
+        self.customGroupID = customGroupID
+        self.order = order
+        self.icon = icon
+    }
+}
+
+public struct MenuPresentation: Equatable, Sendable {
+    public var rootItems: [MenuItemPresentation]
+    public var groupedSubmenuItems: [MenuGroup: [MenuItemPresentation]]
+    public var groupedCustomSubmenuItems: [String: [MenuItemPresentation]]
+
+    public init(
+        rootItems: [MenuItemPresentation] = [],
+        groupedSubmenuItems: [MenuGroup: [MenuItemPresentation]] = [:],
+        groupedCustomSubmenuItems: [String: [MenuItemPresentation]] = [:]
+    ) {
+        self.rootItems = rootItems
+        self.groupedSubmenuItems = groupedSubmenuItems
+        self.groupedCustomSubmenuItems = groupedCustomSubmenuItems
+    }
+}
+
+public struct MenuBuilder {
+    public init() {}
+
+    public func buildMenu(
+        config: RightClickConfig,
+        context: FinderContext,
+        bookmarks: DirectoryBookmarkCatalog = DirectoryBookmarkCatalog()
+    ) -> MenuPresentation {
+        let visibleActions = config.actions
+            .filter { $0.isEnabled }
+            .filter { $0.visibility.contains(context.invocation.visibility) }
+            .sorted { lhs, rhs in
+                if lhs.order == rhs.order {
+                    return lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
+                }
+                return lhs.order < rhs.order
+            }
+
+        let rootItems = visibleActions
+            .filter { $0.placement == .rootMenu }
+            .prefix(max(0, config.maxRootMenuActions))
+            .map { makePresentation($0, config: config, bookmarks: bookmarks) }
+
+        var grouped: [MenuGroup: [MenuItemPresentation]] = [:]
+        var customGrouped: [String: [MenuItemPresentation]] = [:]
+        visibleActions
+            .filter { $0.placement == .submenu }
+            .forEach { action in
+                if let customGroupID = action.payload.customGroupID,
+                   config.customGroups.contains(where: { $0.id == customGroupID }) {
+                    customGrouped[customGroupID, default: []].append(
+                        makePresentation(action, config: config, bookmarks: bookmarks)
+                    )
+                    return
+                }
+                let group = action.group ?? .fileOperations
+                grouped[group, default: []].append(makePresentation(action, config: config, bookmarks: bookmarks))
+            }
+
+        for group in Array(grouped.keys) {
+            grouped[group]?.sort(by: menuItemSort)
+        }
+        for groupID in Array(customGrouped.keys) {
+            customGrouped[groupID]?.sort(by: menuItemSort)
+        }
+
+        return MenuPresentation(
+            rootItems: Array(rootItems),
+            groupedSubmenuItems: grouped,
+            groupedCustomSubmenuItems: customGrouped
+        )
+    }
+
+    private func makePresentation(
+        _ action: RightClickAction,
+        config: RightClickConfig,
+        bookmarks: DirectoryBookmarkCatalog
+    ) -> MenuItemPresentation {
+        MenuItemPresentation(
+            id: action.id,
+            title: action.title,
+            actionID: action.id,
+            group: action.group,
+            customGroupID: action.payload.customGroupID,
+            order: action.order,
+            icon: MenuIconResolver.icon(for: action, config: config, bookmarks: bookmarks)
+        )
+    }
+
+    private func menuItemSort(_ lhs: MenuItemPresentation, _ rhs: MenuItemPresentation) -> Bool {
+        if lhs.order == rhs.order {
+            return lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
+        }
+        return lhs.order < rhs.order
+    }
+}

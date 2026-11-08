@@ -1,0 +1,1420 @@
+import AppKit
+import RightClickCore
+import SwiftUI
+import UniformTypeIdentifiers
+
+enum ActionManagementFilter: String, CaseIterable, Identifiable {
+    case all = "全部"
+    case create = "新建"
+    case operations = "操作"
+    case tools = "应用"
+
+    var id: String { rawValue }
+
+    func matches(_ action: RightClickAction) -> Bool {
+        switch self {
+        case .all:
+            return true
+        case .create:
+            return action.kind == .createFile || action.group == .createFile
+        case .operations:
+            return [
+                .commonDirectories,
+                .moveToCommonDirectory,
+                .copyToCommonDirectory,
+                .fileOperations
+            ].contains(action.group)
+        case .tools:
+            return action.group == .developerEntrypoints || action.kind == .openInApp
+        }
+    }
+}
+
+enum ActionPreviewContext: String, CaseIterable, Identifiable {
+    case fileFolder = "文件/文件夹"
+    case desktop = "桌面空白处"
+    case disk = "磁盘"
+
+    var id: String { rawValue }
+
+    var finderInvocation: FinderInvocation {
+        switch self {
+        case .fileFolder:
+            return .selection
+        case .desktop:
+            return .container
+        case .disk:
+            return .toolbar
+        }
+    }
+}
+
+enum ActionGroupingMode: String, CaseIterable, Identifiable {
+    case type = "按类型分组"
+    case placement = "按菜单层级"
+    case visibility = "按适用范围"
+    case status = "按启用状态"
+    case none = "不分组"
+
+    var id: String { rawValue }
+}
+
+enum ActionSortingMode: String, CaseIterable, Identifiable {
+    case custom = "自定义排序"
+    case name = "按名称排序"
+    case type = "按类型排序"
+    case status = "启用优先"
+
+    var id: String { rawValue }
+}
+
+struct ActionGroupSection: Identifiable {
+    let id: String
+    let title: String
+    var rows: [RightClickAction]
+}
+
+struct ActionListView: View {
+    @ObservedObject var viewModel: SettingsViewModel
+    @State private var selectedFilter: ActionManagementFilter = .all
+    @State private var previewContext: ActionPreviewContext = .fileFolder
+    @State private var groupingMode: ActionGroupingMode = .type
+    @State private var sortingMode: ActionSortingMode = .custom
+    @State private var showsGroupSeparators = true
+
+    private var sortedActions: [RightClickAction] {
+        viewModel.config.actions.sorted(by: { $0.order < $1.order })
+    }
+
+    private var actionCounts: [ActionManagementFilter: Int] {
+        Dictionary(
+            uniqueKeysWithValues: ActionManagementFilter.allCases.map { filter in
+                (filter, sortedActions.filter { filter.matches($0) }.count)
+            }
+        )
+    }
+
+    private func filteredActions(from actions: [RightClickAction]) -> [RightClickAction] {
+        let categoryRows = actions.filter { selectedFilter.matches($0) }
+        let keyword = viewModel.actionSearchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !keyword.isEmpty else { return categoryRows }
+        return categoryRows.filter { action in
+            action.title.lowercased().contains(keyword)
+                || action.kind.displayName.lowercased().contains(keyword)
+                || (action.group?.displayName.lowercased().contains(keyword) ?? false)
+                || action.visibility.displayName.lowercased().contains(keyword)
+        }
+    }
+
+    private func arrangedActions(from actions: [RightClickAction]) -> [RightClickAction] {
+        let rows = filteredActions(from: actions)
+
+        switch sortingMode {
+        case .custom:
+            return rows.sorted { $0.order < $1.order }
+        case .name:
+            return rows.sorted {
+                let comparison = $0.title.localizedStandardCompare($1.title)
+                return comparison == .orderedSame ? $0.order < $1.order : comparison == .orderedAscending
+            }
+        case .type:
+            return rows.sorted {
+                let comparison = $0.managementType.localizedStandardCompare($1.managementType)
+                return comparison == .orderedSame ? $0.order < $1.order : comparison == .orderedAscending
+            }
+        case .status:
+            return rows.sorted {
+                if $0.isEnabled != $1.isEnabled {
+                    return $0.isEnabled && !$1.isEnabled
+                }
+                return $0.order < $1.order
+            }
+        }
+    }
+
+    private func actionSections(from rows: [RightClickAction]) -> [ActionGroupSection] {
+        guard groupingMode != .none else {
+            return [ActionGroupSection(id: "all", title: "全部菜单项", rows: rows)]
+        }
+
+        var sections: [ActionGroupSection] = []
+        var sectionIndexes: [String: Int] = [:]
+
+        for action in rows {
+            let title = groupTitle(for: action)
+            if let index = sectionIndexes[title] {
+                sections[index].rows.append(action)
+            } else {
+                sectionIndexes[title] = sections.count
+                sections.append(ActionGroupSection(id: "\(groupingMode.id)-\(title)", title: title, rows: [action]))
+            }
+        }
+
+        return sections
+    }
+
+    private func groupTitle(for action: RightClickAction) -> String {
+        switch groupingMode {
+        case .type:
+            return action.managementType
+        case .placement:
+            return action.placement.displayName
+        case .visibility:
+            let displayName = action.visibility.displayName
+            return displayName.isEmpty ? "未设置" : displayName
+        case .status:
+            return action.isEnabled ? "已启用" : "已禁用"
+        case .none:
+            return "全部菜单项"
+        }
+    }
+
+    var body: some View {
+        let actions = sortedActions
+        let rows = arrangedActions(from: actions)
+        let sections = actionSections(from: rows)
+
+        GeometryReader { proxy in
+            let metrics = layoutMetrics(for: proxy.size.width)
+
+            AppKitScrollContainer {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(alignment: .top, spacing: metrics.previewWidth > 0 ? 18 : 0) {
+                        VStack(alignment: .leading, spacing: 14) {
+                            ActionManagementTable(
+                                sections: sections,
+                                allActions: actions,
+                                showsGroupSeparators: showsGroupSeparators,
+                                allowsCustomOrdering: sortingMode == .custom,
+                                selectedFilter: $selectedFilter,
+                                counts: actionCounts,
+                                viewModel: viewModel
+                            )
+
+                            SubmenuGroupOrderPanel(viewModel: viewModel)
+
+                            ActionManagementHintBar()
+                        }
+                        .frame(width: metrics.tableWidth, alignment: .topLeading)
+
+                        if metrics.previewWidth > 0 {
+                            ActionMenuPreviewCard(
+                                selectedContext: $previewContext,
+                                actions: rows,
+                                config: viewModel.config,
+                                bookmarks: viewModel.bookmarks
+                            )
+                            .frame(width: metrics.previewWidth)
+                        }
+                    }
+
+                    if metrics.previewWidth == 0 {
+                        ActionMenuPreviewCard(
+                            selectedContext: $previewContext,
+                            actions: rows,
+                            config: viewModel.config,
+                            bookmarks: viewModel.bookmarks
+                        )
+                        .frame(width: metrics.contentWidth)
+                    }
+                }
+                .padding(.horizontal, 28)
+                .padding(.top, 24)
+                .padding(.bottom, 24)
+                .frame(width: metrics.contentWidth + 56, alignment: .topLeading)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+            .background(SettingsTheme.pageOverlay)
+        }
+    }
+
+    private func layoutMetrics(for availableWidth: CGFloat) -> (contentWidth: CGFloat, tableWidth: CGFloat, previewWidth: CGFloat) {
+        let contentWidth = max(availableWidth - 56, 760)
+        let minimumTableWidth: CGFloat = 690
+        let preferredPreviewWidth: CGFloat = 322
+        let previewSpacing: CGFloat = 18
+        let previewWidth: CGFloat = contentWidth >= minimumTableWidth + preferredPreviewWidth + previewSpacing
+            ? preferredPreviewWidth
+            : 0
+        let spacing: CGFloat = previewWidth > 0 ? previewSpacing : 0
+        let tableWidth = max(minimumTableWidth, contentWidth - previewWidth - spacing)
+        return (contentWidth, tableWidth, previewWidth)
+    }
+}
+
+struct ActionManagementTable: View {
+    let sections: [ActionGroupSection]
+    let allActions: [RightClickAction]
+    let showsGroupSeparators: Bool
+    let allowsCustomOrdering: Bool
+    @Binding var selectedFilter: ActionManagementFilter
+    let counts: [ActionManagementFilter: Int]
+    @ObservedObject var viewModel: SettingsViewModel
+
+    private var enabledCount: Int {
+        allActions.filter(\.isEnabled).count
+    }
+
+    private var disabledCount: Int {
+        allActions.filter { !$0.isEnabled }.count
+    }
+
+    private var rows: [RightClickAction] {
+        sections.flatMap(\.rows)
+    }
+
+    private var shouldShowGroupHeaders: Bool {
+        showsGroupSeparators && sections.count > 1
+    }
+
+    var body: some View {
+        let visibleActionIDs = rows.map(\.id)
+
+        DesignPanel(padding: 0) {
+            VStack(spacing: 0) {
+                ActionFilterTabs(
+                    selectedFilter: $selectedFilter,
+                    counts: counts
+                )
+
+                Divider()
+
+                ActionTableHeader()
+
+                if rows.isEmpty {
+                    EmptyStateRow(
+                        title: allActions.isEmpty ? "暂无菜单项" : "没有匹配的菜单项",
+                        systemImage: "contextualmenu.and.cursorarrow"
+                    )
+                } else {
+                    LazyVStack(spacing: 0) {
+                        ForEach(Array(sections.enumerated()), id: \.element.id) { sectionIndex, section in
+                            if shouldShowGroupHeaders {
+                                ActionGroupHeader(title: section.title, count: section.rows.count)
+                                Divider()
+                                    .padding(.leading, 18)
+                            }
+
+                            ForEach(Array(section.rows.enumerated()), id: \.element.id) { rowIndex, action in
+                                let orderIndex = visibleActionIDs.firstIndex(of: action.id) ?? 0
+                                ActionEditorRow(
+                                    action: action,
+                                    viewModel: viewModel,
+                                    canMoveUp: allowsCustomOrdering && orderIndex > 0,
+                                    canMoveDown: allowsCustomOrdering && orderIndex < visibleActionIDs.count - 1,
+                                    orderingHelp: allowsCustomOrdering ? nil : "切换到自定义排序后可调整顺序",
+                                    onMoveUp: {
+                                        viewModel.moveAction(actionID: action.id, visibleActionIDs: visibleActionIDs, offset: -1)
+                                    },
+                                    onMoveDown: {
+                                        viewModel.moveAction(actionID: action.id, visibleActionIDs: visibleActionIDs, offset: 1)
+                                    }
+                                )
+                                if rowIndex < section.rows.count - 1 {
+                                    Divider()
+                                        .padding(.leading, 26)
+                                }
+                            }
+
+                            if sectionIndex < sections.count - 1 {
+                                Divider()
+                                    .padding(.leading, shouldShowGroupHeaders ? 0 : 26)
+                            }
+                        }
+                    }
+                }
+
+                Divider()
+
+                HStack(spacing: 10) {
+                    Label("自定义排序下可用箭头调整菜单顺序", systemImage: "arrow.up.arrow.down")
+                        .foregroundStyle(SettingsTheme.accent)
+
+                    Spacer()
+
+                    Text("已启用 \(enabledCount) 项，禁用 \(disabledCount) 项")
+                        .foregroundStyle(SettingsTheme.muted)
+                }
+                .font(.caption)
+                .padding(.horizontal, 18)
+                .frame(height: 42)
+            }
+        }
+    }
+}
+
+struct SubmenuGroupOrderPanel: View {
+    @ObservedObject var viewModel: SettingsViewModel
+    @State private var draggingEntryID: String?
+
+    private var entries: [SubmenuGroupRef] {
+        viewModel.config.resolvedSubmenuOrder
+    }
+
+    var body: some View {
+        DesignPanel {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    Text("整体排序")
+                        .font(.headline)
+                        .foregroundStyle(SettingsTheme.ink)
+                    Text("拖动或使用箭头调整 Finder 右键菜单中各分组的前后顺序")
+                        .font(.caption)
+                        .foregroundStyle(SettingsTheme.muted)
+                    Spacer(minLength: 0)
+                    Button {
+                        viewModel.addCustomMenuGroup()
+                    } label: {
+                        Label("自定义分组", systemImage: "plus")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(SettingsTheme.accent)
+                    .help("新建一个自定义分组子菜单")
+                }
+
+                VStack(spacing: 0) {
+                    if let first = entries.first {
+                        Color.clear
+                            .frame(height: 14)
+                            .contentShape(Rectangle())
+                            .onDrop(
+                                of: [UTType.text],
+                                delegate: ReorderDropDelegate(
+                                    targetID: first.rawValue,
+                                    rowHeight: 0,
+                                    draggingID: $draggingEntryID
+                                ) { sourceID, targetID, _ in
+                                    viewModel.moveSubmenuEntry(sourceID, targetID: targetID, placeAfter: false)
+                                }
+                            )
+                    }
+
+                    ForEach(Array(entries.enumerated()), id: \.element) { index, entry in
+                        entryRow(index: index, entry: entry)
+                        if index < entries.count - 1 {
+                            Divider()
+                        }
+                    }
+
+                    if let last = entries.last {
+                        Color.clear
+                            .frame(height: 14)
+                            .contentShape(Rectangle())
+                            .onDrop(
+                                of: [UTType.text],
+                                delegate: ReorderDropDelegate(
+                                    targetID: last.rawValue,
+                                    rowHeight: 0,
+                                    draggingID: $draggingEntryID
+                                ) { sourceID, targetID, _ in
+                                    viewModel.moveSubmenuEntry(sourceID, targetID: targetID, placeAfter: true)
+                                }
+                            )
+                    }
+                }
+            }
+        }
+    }
+
+    private func beginRename(id: String, title: String) {
+        let alert = NSAlert()
+        alert.messageText = "重命名分组"
+        alert.informativeText = "输入新的分组名称，保存后 Finder 菜单同步更新。"
+        alert.alertStyle = .informational
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.stringValue = title
+        field.placeholderString = "分组名称"
+        alert.accessoryView = field
+        alert.addButton(withTitle: "保存")
+        alert.addButton(withTitle: "取消")
+        alert.window.initialFirstResponder = field
+        alert.window.makeFirstResponder(field)
+        field.selectText(nil)
+
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn {
+            viewModel.renameCustomMenuGroup(id: id, title: field.stringValue)
+        }
+    }
+
+    @ViewBuilder
+    private func entryRow(index: Int, entry: SubmenuGroupRef) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "line.3.horizontal")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(SettingsTheme.muted)
+                .frame(width: 16, height: 22)
+                .help("拖动调整分组顺序")
+
+            MenuIconView(
+                icon: iconDescriptor(for: entry),
+                tint: SettingsTheme.accent,
+                size: 18,
+                font: .callout
+            )
+            .frame(width: 24)
+
+            if case .custom(let id) = entry,
+               let customGroup = viewModel.config.customGroups.first(where: { $0.id == id }) {
+                Text(customGroup.title)
+                    .font(.callout)
+                    .foregroundStyle(SettingsTheme.ink)
+                    .lineLimit(1)
+                    .contentShape(Rectangle())
+                    .onTapGesture(count: 2) {
+                        beginRename(id: id, title: customGroup.title)
+                    }
+
+                Button {
+                    beginRename(id: id, title: customGroup.title)
+                } label: {
+                    Image(systemName: "pencil")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(SettingsTheme.muted)
+                }
+                .buttonStyle(.plain)
+                .help("重命名该自定义分组")
+
+                Button {
+                    viewModel.deleteCustomMenuGroup(id: id)
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(SettingsTheme.muted)
+                }
+                .buttonStyle(.plain)
+                .help("删除该自定义分组，组内菜单项会退回内置分组")
+            } else if case .builtIn(let group) = entry {
+                Text(group.displayName)
+                    .font(.callout)
+                    .foregroundStyle(SettingsTheme.ink)
+            }
+
+            Spacer(minLength: 0)
+
+            SortStepControls(
+                canMoveUp: index > 0,
+                canMoveDown: index < entries.count - 1,
+                onMoveUp: { viewModel.moveSubmenuEntry(entry.rawValue, offset: -1) },
+                onMoveDown: { viewModel.moveSubmenuEntry(entry.rawValue, offset: 1) }
+            )
+        }
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
+        .opacity(draggingEntryID == entry.rawValue ? 0.5 : 1)
+        .onDrag {
+            draggingEntryID = entry.rawValue
+            return NSItemProvider(object: entry.rawValue as NSString)
+        }
+        .onDrop(
+            of: [UTType.text],
+            delegate: ReorderDropDelegate(
+                targetID: entry.rawValue,
+                rowHeight: 30,
+                draggingID: $draggingEntryID
+            ) { sourceID, targetID, placeAfter in
+                viewModel.moveSubmenuEntry(sourceID, targetID: targetID, placeAfter: placeAfter)
+            }
+        )
+    }
+
+    private func iconDescriptor(for entry: SubmenuGroupRef) -> MenuIconDescriptor {
+        switch entry {
+        case .builtIn(let group):
+            return group.previewIcon
+        case .custom(let id):
+            if
+                let symbol = viewModel.config.customGroups.first(where: { $0.id == id })?.iconSymbol,
+                !symbol.isEmpty
+            {
+                return .systemSymbol(symbol)
+            }
+            return .systemSymbol("folder")
+        }
+    }
+}
+
+struct ActionGroupHeader: View {
+    let title: String
+    let count: Int
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(title)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(SettingsTheme.ink)
+            Text("\(count)")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(SettingsTheme.accent)
+                .padding(.horizontal, 7)
+                .frame(height: 20)
+                .background(SettingsTheme.accent.opacity(0.1), in: Capsule())
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 18)
+        .frame(height: 34)
+        .background(SettingsTheme.accent.opacity(0.04))
+    }
+}
+
+struct SortStepControls: View {
+    let canMoveUp: Bool
+    let canMoveDown: Bool
+    var disabledHelp: String? = nil
+    let onMoveUp: () -> Void
+    let onMoveDown: () -> Void
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Button(action: onMoveUp) {
+                RowIconControlLabel(
+                    systemImage: "chevron.up",
+                    isDisabled: !canMoveUp,
+                    size: 24,
+                    iconSize: 10,
+                    cornerRadius: 6
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(!canMoveUp)
+            .help(canMoveUp ? "上移" : (disabledHelp ?? "已经在最前"))
+            .accessibilityLabel("上移")
+
+            Button(action: onMoveDown) {
+                RowIconControlLabel(
+                    systemImage: "chevron.down",
+                    isDisabled: !canMoveDown,
+                    size: 24,
+                    iconSize: 10,
+                    cornerRadius: 6
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(!canMoveDown)
+            .help(canMoveDown ? "下移" : (disabledHelp ?? "已经在最后"))
+            .accessibilityLabel("下移")
+        }
+    }
+}
+
+struct ActionFilterTabs: View {
+    @Binding var selectedFilter: ActionManagementFilter
+    let counts: [ActionManagementFilter: Int]
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ForEach(ActionManagementFilter.allCases) { filter in
+                FilterTabButton(
+                    title: "\(filter.rawValue) (\(counts[filter, default: 0]))",
+                    isSelected: selectedFilter == filter
+                ) {
+                    selectedFilter = filter
+                }
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+}
+
+struct ActionTableHeader: View {
+    var body: some View {
+        HStack(spacing: 12) {
+            Text("排序").frame(width: 58, alignment: .center)
+            Text("菜单项").frame(maxWidth: .infinity, alignment: .leading)
+            Text("状态").frame(width: 56, alignment: .center)
+            Text("适用范围").frame(width: 130, alignment: .leading)
+            Text("菜单层级").frame(width: 112, alignment: .leading)
+            Text("类型").frame(width: 58, alignment: .leading)
+            Text("操作").frame(width: 40, alignment: .center)
+        }
+        .settingsTableHeaderStyle()
+    }
+}
+
+struct ActionEditorRow: View {
+    let action: RightClickAction
+    @ObservedObject var viewModel: SettingsViewModel
+    let canMoveUp: Bool
+    let canMoveDown: Bool
+    let orderingHelp: String?
+    let onMoveUp: () -> Void
+    let onMoveDown: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            SortStepControls(
+                canMoveUp: canMoveUp,
+                canMoveDown: canMoveDown,
+                disabledHelp: orderingHelp,
+                onMoveUp: onMoveUp,
+                onMoveDown: onMoveDown
+            )
+            .frame(width: 58)
+
+            HStack(spacing: 12) {
+                MenuIconView(
+                    icon: MenuIconResolver.icon(for: action, config: viewModel.config, bookmarks: viewModel.bookmarks),
+                    tint: action.isEnabled ? action.managementTint : Color.secondary.opacity(0.5),
+                    size: 24,
+                    font: .system(size: 22, weight: .semibold)
+                )
+                .frame(width: 30, alignment: .center)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(action.title)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(action.isEnabled ? SettingsTheme.ink : .secondary)
+                        .lineLimit(1)
+                    Text(action.managementSubtitle)
+                        .font(.system(size: 12))
+                        .foregroundStyle(SettingsTheme.muted)
+                        .lineLimit(1)
+                }
+                .layoutPriority(2)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .layoutPriority(3)
+
+            Toggle("启用 \(action.title)", isOn: Binding(
+                get: { action.isEnabled },
+                set: { viewModel.setActionEnabled($0, actionID: action.id) }
+            ))
+            .toggleStyle(.switch)
+            .labelsHidden()
+            .frame(width: 56)
+
+            ActionVisibilityMenu(action: action, viewModel: viewModel)
+                .frame(width: 130, alignment: .leading)
+
+            ActionPlacementMenu(action: action, viewModel: viewModel)
+                .frame(width: 112, alignment: .leading)
+
+            ActionTypeBadge(action: action)
+                .frame(width: 58, alignment: .leading)
+
+            HStack(spacing: 0) {
+                RowIconButton(
+                    systemImage: "eye.slash",
+                    accessibilityLabel: "禁用 \(action.title)",
+                    helpText: "从右键菜单中隐藏",
+                    tone: .destructive,
+                    isDisabled: !action.isEnabled
+                ) {
+                    viewModel.setActionEnabled(false, actionID: action.id)
+                }
+            }
+            .frame(width: 40, alignment: .center)
+        }
+        .padding(.horizontal, 18)
+        .frame(height: 56)
+        .hoverRowBackground()
+        .opacity(action.isEnabled ? 1 : 0.6)
+    }
+}
+
+struct FlowPillGroup: View {
+    let items: [String]
+
+    var body: some View {
+        let visibleItems = Array(items.prefix(2))
+        let remainingCount = max(0, items.count - visibleItems.count)
+
+        HStack(spacing: 6) {
+            ForEach(visibleItems, id: \.self) { item in
+                Text(item)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(SettingsTheme.muted)
+                    .padding(.horizontal, 7)
+                    .frame(height: 22)
+                    .background(SettingsTheme.subtleFill, in: RoundedRectangle(cornerRadius: 5))
+            }
+
+            if remainingCount > 0 {
+                Text("+\(remainingCount)")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(SettingsTheme.accent)
+                    .padding(.horizontal, 6)
+                    .frame(height: 22)
+                    .background(SettingsTheme.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 5))
+            }
+        }
+        .lineLimit(1)
+    }
+}
+
+struct ActionVisibilityMenu: View {
+    let action: RightClickAction
+    @ObservedObject var viewModel: SettingsViewModel
+    @State private var isHovered = false
+    @State private var isPresented = false
+
+    var body: some View {
+        Button {
+            isPresented.toggle()
+        } label: {
+            HStack(spacing: 6) {
+                FlowPillGroup(items: action.visibilityPills)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(SettingsTheme.muted)
+            }
+            .padding(.horizontal, 7)
+            .frame(height: 28)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                isHovered ? SettingsTheme.accent.opacity(0.07) : SettingsTheme.controlBackground,
+                in: RoundedRectangle(cornerRadius: 7)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 7)
+                    .stroke(isHovered ? SettingsTheme.accent.opacity(0.18) : SettingsTheme.hairline)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 7))
+            .onHover { hovering in
+                isHovered = action.isEnabled && hovering
+            }
+            .animation(.easeOut(duration: 0.12), value: isHovered)
+        }
+        .buttonStyle(.plain)
+        .disabled(!action.isEnabled)
+        .help("调整 \(action.title) 的显示位置")
+        .accessibilityLabel("调整 \(action.title) 的显示位置")
+        .popover(isPresented: $isPresented, arrowEdge: .top) {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(ActionVisibility.allCases, id: \.self) { visibility in
+                    let isSelected = action.visibility.contains(visibility)
+                    ActionVisibilityOptionRow(
+                        visibility: visibility,
+                        isSelected: isSelected,
+                        isOnlySelection: isSelected && action.visibility.count == 1
+                    ) {
+                        viewModel.toggleActionVisibility(visibility, actionID: action.id)
+                    }
+                }
+
+                HStack(spacing: 6) {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text("至少保留一个显示位置，可多选。")
+                        .font(.system(size: 10))
+                }
+                .foregroundStyle(SettingsTheme.muted)
+                .padding(.horizontal, 4)
+                .padding(.top, 2)
+            }
+            .padding(8)
+            .frame(width: 238)
+        }
+    }
+}
+
+struct ActionVisibilityOptionRow: View {
+    let visibility: ActionVisibility
+    let isSelected: Bool
+    let isOnlySelection: Bool
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: visibility.systemImage)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(iconColor)
+                    .frame(width: 20, height: 20)
+                    .background(iconColor.opacity(isSelected ? 0.13 : 0.08), in: RoundedRectangle(cornerRadius: 5))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(visibility.displayName)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(isSelected ? SettingsTheme.accent : SettingsTheme.ink)
+                        .lineLimit(1)
+
+                    Text(subtitle)
+                        .font(.system(size: 11))
+                        .foregroundStyle(isOnlySelection ? .orange : SettingsTheme.muted)
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                Image(systemName: trailingSystemImage)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(trailingColor)
+                    .frame(width: 16)
+            }
+            .padding(.horizontal, 9)
+            .frame(height: 48)
+            .background(rowBackground, in: RoundedRectangle(cornerRadius: 7))
+            .overlay(
+                RoundedRectangle(cornerRadius: 7)
+                    .stroke(rowStroke)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 7))
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.12), value: isHovered)
+        .animation(.easeOut(duration: 0.12), value: isSelected)
+    }
+
+    private var subtitle: String {
+        if isOnlySelection {
+            return "至少保留一个显示位置"
+        }
+        return isSelected ? "当前已启用" : visibility.helperText
+    }
+
+    private var iconColor: Color {
+        isSelected ? SettingsTheme.accent : SettingsTheme.muted
+    }
+
+    private var trailingSystemImage: String {
+        isSelected ? "checkmark.circle.fill" : "circle"
+    }
+
+    private var trailingColor: Color {
+        isSelected ? SettingsTheme.accent : SettingsTheme.hairline.opacity(0.85)
+    }
+
+    private var rowBackground: Color {
+        if isSelected {
+            return SettingsTheme.accent.opacity(0.09)
+        }
+        return isHovered ? SettingsTheme.accent.opacity(0.05) : SettingsTheme.controlBackground
+    }
+
+    private var rowStroke: Color {
+        if isSelected {
+            return SettingsTheme.accent.opacity(0.22)
+        }
+        return isHovered ? SettingsTheme.accent.opacity(0.16) : SettingsTheme.hairline
+    }
+}
+
+struct ActionPlacementMenu: View {
+    let action: RightClickAction
+    @ObservedObject var viewModel: SettingsViewModel
+    @State private var isHovered = false
+    @State private var isPresented = false
+
+    private var appGroupOptions: [MenuGroup] {
+        [.developerEntrypoints, .developerTools]
+    }
+
+    var body: some View {
+        Button {
+            isPresented.toggle()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: action.placement.systemImage)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(placementTint)
+                    .frame(width: 13)
+
+                Text(placementTitle)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(placementTint)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.92)
+
+                Spacer(minLength: 0)
+
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(SettingsTheme.muted)
+            }
+            .padding(.horizontal, 7)
+            .frame(height: 28)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                isHovered ? placementTint.opacity(0.08) : SettingsTheme.controlBackground,
+                in: RoundedRectangle(cornerRadius: 7)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 7)
+                    .stroke(isHovered ? placementTint.opacity(0.22) : SettingsTheme.hairline)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 7))
+            .onHover { hovering in
+                isHovered = action.isEnabled && hovering
+            }
+            .animation(.easeOut(duration: 0.12), value: isHovered)
+        }
+        .buttonStyle(.plain)
+        .disabled(!action.isEnabled)
+        .help("设置 \(action.title) 的菜单层级")
+        .accessibilityLabel("设置 \(action.title) 的菜单层级")
+        .popover(isPresented: $isPresented, arrowEdge: .top) {
+            VStack(spacing: 6) {
+                ActionPlacementOptionRow(
+                    placement: .rootMenu,
+                    title: "显示在 Finder 一级菜单",
+                    subtitle: "直接出现在右键菜单中",
+                    isSelected: action.placement == .rootMenu
+                ) {
+                    select(.rootMenu)
+                }
+
+                Divider()
+                    .padding(.vertical, 2)
+
+                if appGroupOptions.contains(where: { $0 == action.group }) || action.kind == .openInApp {
+                    ForEach(appGroupOptions, id: \.self) { group in
+                        ActionPlacementOptionRow(
+                            placement: .submenu,
+                            title: group.displayName,
+                            subtitle: "放入该功能分组子菜单",
+                            isSelected: action.placement == .submenu
+                                && action.payload.customGroupID == nil
+                                && action.group == group
+                        ) {
+                            viewModel.assignAction(action.id, to: group)
+                            isPresented = false
+                        }
+                    }
+                } else {
+                    ActionPlacementOptionRow(
+                        placement: .submenu,
+                        title: "放入功能分组菜单",
+                        subtitle: "归入该菜单项对应的默认分组",
+                        isSelected: action.placement == .submenu && action.payload.customGroupID == nil
+                    ) {
+                        select(.submenu)
+                    }
+                }
+
+                Divider()
+                    .padding(.vertical, 2)
+
+                Text("自定义分组")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(SettingsTheme.muted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 4)
+
+                ForEach(viewModel.config.customGroups) { group in
+                    ActionPlacementOptionRow(
+                        placement: .submenu,
+                        title: group.title,
+                        subtitle: "放入自定义分组子菜单",
+                        isSelected: action.placement == .submenu && action.payload.customGroupID == group.id
+                    ) {
+                        selectCustomGroup(group.id)
+                    }
+                }
+
+                Button {
+                    let groupID = viewModel.addCustomMenuGroup()
+                    viewModel.assignAction(action.id, toCustomGroup: groupID)
+                    isPresented = false
+                } label: {
+                    Label("新建自定义分组", systemImage: "plus")
+                        .font(.system(size: 12, weight: .medium))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 5)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(SettingsTheme.accent)
+            }
+            .padding(8)
+            .frame(width: 268)
+        }
+    }
+
+    private var placementTitle: String {
+        if
+            action.placement == .submenu,
+            let groupID = action.payload.customGroupID,
+            let group = viewModel.config.customGroups.first(where: { $0.id == groupID })
+        {
+            return group.title
+        }
+        if action.placement == .submenu, let group = action.group {
+            return group.displayName
+        }
+        return action.placement.displayName
+    }
+
+    private var placementTint: Color {
+        switch action.placement {
+        case .rootMenu:
+            return SettingsTheme.accent
+        case .submenu:
+            return SettingsTheme.muted
+        }
+    }
+
+    private func select(_ placement: ActionPlacement) {
+        viewModel.setActionPlacement(placement, actionID: action.id)
+        isPresented = false
+    }
+
+    private func selectCustomGroup(_ groupID: String) {
+        viewModel.assignAction(action.id, toCustomGroup: groupID)
+        isPresented = false
+    }
+}
+
+struct ActionPlacementOptionRow: View {
+    let placement: ActionPlacement
+    let title: String
+    let subtitle: String
+    let isSelected: Bool
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: placement.systemImage)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(iconColor)
+                    .frame(width: 20, height: 20)
+                    .background(iconColor.opacity(isSelected ? 0.13 : 0.08), in: RoundedRectangle(cornerRadius: 5))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(isSelected ? SettingsTheme.accent : SettingsTheme.ink)
+                        .lineLimit(1)
+
+                    Text(subtitle)
+                        .font(.system(size: 11))
+                        .foregroundStyle(SettingsTheme.muted)
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(isSelected ? SettingsTheme.accent : SettingsTheme.hairline.opacity(0.85))
+                    .frame(width: 16)
+            }
+            .padding(.horizontal, 9)
+            .frame(height: 48)
+            .background(rowBackground, in: RoundedRectangle(cornerRadius: 7))
+            .overlay(
+                RoundedRectangle(cornerRadius: 7)
+                    .stroke(rowStroke)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 7))
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.12), value: isHovered)
+        .animation(.easeOut(duration: 0.12), value: isSelected)
+    }
+
+    private var iconColor: Color {
+        isSelected ? SettingsTheme.accent : SettingsTheme.muted
+    }
+
+    private var rowBackground: Color {
+        if isSelected {
+            return SettingsTheme.accent.opacity(0.09)
+        }
+        return isHovered ? SettingsTheme.accent.opacity(0.05) : SettingsTheme.controlBackground
+    }
+
+    private var rowStroke: Color {
+        if isSelected {
+            return SettingsTheme.accent.opacity(0.22)
+        }
+        return isHovered ? SettingsTheme.accent.opacity(0.16) : SettingsTheme.hairline
+    }
+}
+
+struct ActionTypeBadge: View {
+    let action: RightClickAction
+
+    var body: some View {
+        Text(action.managementType)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(action.managementTint)
+            .padding(.horizontal, 8)
+            .frame(height: 22)
+            .background(action.managementTint.opacity(0.12), in: RoundedRectangle(cornerRadius: 5))
+    }
+}
+
+struct ActionManagementHintBar: View {
+    var body: some View {
+        SettingsHintBanner(
+            icon: "lightbulb",
+            title: "提示：",
+            message: "使用行首的上下箭头调整菜单顺序，控制右键菜单的展示位置。"
+        )
+    }
+}
+
+struct ActionMenuPreviewCard: View {
+    @Binding var selectedContext: ActionPreviewContext
+    let actions: [RightClickAction]
+    let config: RightClickConfig
+    let bookmarks: DirectoryBookmarkCatalog
+
+    var body: some View {
+        DesignPanel(padding: 20) {
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
+                        Text("右键菜单预览")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(SettingsTheme.ink)
+                        Image(systemName: "info.circle")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(SettingsTheme.muted)
+                    }
+
+                    Text("在不同位置右键时的菜单效果预览。")
+                        .font(.system(size: 12))
+                        .foregroundStyle(SettingsTheme.muted)
+                }
+
+                ActionPreviewContextPicker(selectedContext: $selectedContext)
+
+                FinderContextMenuMock(
+                    selectedContext: selectedContext,
+                    actions: actions,
+                    config: config,
+                    bookmarks: bookmarks
+                )
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.top, 6)
+
+                Text("提示：预览仅供参考，实际效果以系统为准。")
+                    .font(.system(size: 11))
+                    .foregroundStyle(SettingsTheme.muted)
+                    .padding(.top, 6)
+            }
+        }
+    }
+}
+
+struct ActionPreviewContextPicker: View {
+    @Binding var selectedContext: ActionPreviewContext
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(ActionPreviewContext.allCases) { context in
+                Button {
+                    selectedContext = context
+                } label: {
+                    Text(context.rawValue)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(selectedContext == context ? SettingsTheme.ink : SettingsTheme.muted)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 28)
+                        .background(
+                            selectedContext == context ? SettingsTheme.surfaceElevated : Color.clear,
+                            in: RoundedRectangle(cornerRadius: 6)
+                        )
+                        .contentShape(RoundedRectangle(cornerRadius: 6))
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(selectedContext == context ? .isSelected : [])
+            }
+        }
+        .padding(4)
+        .background(SettingsTheme.subtleFill, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(SettingsTheme.hairline, lineWidth: 0.5))
+    }
+}
+
+struct FinderContextMenuMock: View {
+    let selectedContext: ActionPreviewContext
+    let actions: [RightClickAction]
+    let config: RightClickConfig
+    let bookmarks: DirectoryBookmarkCatalog
+
+    var body: some View {
+        let presentation = menuPresentation
+        let groups = visibleGroups(in: presentation)
+
+        VStack(spacing: 0) {
+            FinderContextMenuStaticRow(title: "打开")
+            FinderContextMenuStaticRow(title: "打开方式", hasSubmenu: true)
+            menuDivider
+            FinderContextMenuStaticRow(title: "移到废纸篓")
+            menuDivider
+            FinderContextMenuStaticRow(title: "显示简介")
+            FinderContextMenuStaticRow(title: "重新命名")
+            FinderContextMenuStaticRow(title: "压缩 “示例文件夹”")
+            FinderContextMenuStaticRow(title: "复制")
+            FinderContextMenuStaticRow(title: "制作替身")
+            FinderContextMenuStaticRow(title: "快速查看")
+            menuDivider
+
+            if presentation.rootItems.isEmpty && groups.isEmpty {
+                FinderContextMenuStaticRow(title: "暂无启用菜单项")
+            } else {
+                ForEach(presentation.rootItems) { item in
+                    FinderContextMenuItemRow(item: item)
+                }
+
+                ForEach(groups, id: \.self) { entry in
+                    switch entry {
+                    case .builtIn(let group):
+                        FinderContextMenuGroupRow(group: group)
+                    case .custom(let id):
+                        if let customGroup = config.customGroups.first(where: { $0.id == id }) {
+                            FinderContextMenuCustomGroupRow(
+                                title: customGroup.title,
+                                iconSymbol: customGroup.iconSymbol
+                            )
+                        }
+                    }
+                }
+            }
+
+            menuDivider
+            FinderContextMenuStaticRow(title: "服务", hasSubmenu: true)
+        }
+        .padding(.vertical, 8)
+        .frame(width: 228)
+        .background(SettingsTheme.menuBackground, in: RoundedRectangle(cornerRadius: 9))
+        .overlay(RoundedRectangle(cornerRadius: 9).stroke(SettingsTheme.hairline))
+        .shadow(color: SettingsTheme.menuShadow, radius: 18, x: 0, y: 12)
+    }
+
+    private var menuPresentation: MenuPresentation {
+        var previewConfig = config
+        previewConfig.actions = actions
+        return MenuBuilder().buildMenu(
+            config: previewConfig,
+            context: FinderContext(
+                invocation: selectedContext.finderInvocation,
+                targetDirectory: URL(fileURLWithPath: "/tmp")
+            ),
+            bookmarks: bookmarks
+        )
+    }
+
+    private func visibleGroups(in presentation: MenuPresentation) -> [SubmenuGroupRef] {
+        config.resolvedSubmenuOrder.filter { entry in
+            switch entry {
+            case .builtIn(let group):
+                return !(presentation.groupedSubmenuItems[group]?.isEmpty ?? true)
+            case .custom(let id):
+                return !(presentation.groupedCustomSubmenuItems[id]?.isEmpty ?? true)
+            }
+        }
+    }
+
+    private var menuDivider: some View {
+        Divider()
+            .padding(.horizontal, 12)
+            .padding(.vertical, 4)
+    }
+}
+
+struct FinderContextMenuStaticRow: View {
+    let title: String
+    var hasSubmenu = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(title)
+                .font(.system(size: 13))
+                .foregroundStyle(SettingsTheme.ink)
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            if hasSubmenu {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(SettingsTheme.muted)
+            }
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 24)
+    }
+}
+
+struct FinderContextMenuItemRow: View {
+    let item: MenuItemPresentation
+
+    var body: some View {
+        HStack(spacing: 9) {
+            if let icon = item.icon {
+                MenuIconView(
+                    icon: icon,
+                    tint: SettingsTheme.accent,
+                    size: 16,
+                    font: .system(size: 13, weight: .semibold)
+                )
+            }
+            Text(item.title)
+                .font(.system(size: 13))
+                .foregroundStyle(SettingsTheme.ink)
+                .lineLimit(1)
+            Spacer(minLength: 8)
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 26)
+    }
+}
+
+struct FinderContextMenuCustomGroupRow: View {
+    let title: String
+    let iconSymbol: String?
+
+    private var icon: MenuIconDescriptor {
+        if let iconSymbol, !iconSymbol.isEmpty {
+            return .systemSymbol(iconSymbol)
+        }
+        return .systemSymbol("folder")
+    }
+
+    var body: some View {
+        HStack(spacing: 9) {
+            MenuIconView(
+                icon: icon,
+                tint: SettingsTheme.accent,
+                size: 16,
+                font: .system(size: 13, weight: .semibold)
+            )
+            Text(title)
+                .font(.system(size: 13))
+                .foregroundStyle(SettingsTheme.ink)
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            Image(systemName: "chevron.right")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(SettingsTheme.muted)
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 26)
+    }
+}
+
+struct FinderContextMenuGroupRow: View {
+    let group: MenuGroup
+
+    var body: some View {
+        HStack(spacing: 9) {
+            MenuIconView(
+                icon: group.previewIcon,
+                tint: group.previewTint,
+                size: 16,
+                font: .system(size: 13, weight: .semibold)
+            )
+            Text(group.displayName)
+                .font(.system(size: 13))
+                .foregroundStyle(SettingsTheme.ink)
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            Image(systemName: "chevron.right")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(SettingsTheme.muted)
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 26)
+    }
+}

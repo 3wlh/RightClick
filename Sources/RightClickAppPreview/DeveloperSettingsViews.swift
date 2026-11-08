@@ -1,0 +1,296 @@
+import AppKit
+import RightClickCore
+import SwiftUI
+import UniformTypeIdentifiers
+
+struct DeveloperEntrypointListView: View {
+    @ObservedObject var viewModel: SettingsViewModel
+    @State private var editingDraft: DeveloperEntrypointDraft?
+
+    var body: some View {
+        let rows = viewModel.config.developerEntrypoints
+        let visibleEntrypointIDs = rows.map(\.id)
+
+        DesignPageScroll {
+            DesignPanel(padding: 0) {
+                LazyVStack(spacing: 0) {
+                    DeveloperTableHeader()
+
+                    if rows.isEmpty {
+                        EmptyStateRow(title: "暂无开发者入口", systemImage: "terminal")
+                    } else {
+                        ForEach(Array(rows.enumerated()), id: \.element.id) { index, entrypoint in
+                            DeveloperTableRow(
+                                entrypoint: entrypoint,
+                                viewModel: viewModel,
+                                canMoveUp: index > 0,
+                                canMoveDown: index < rows.count - 1,
+                                onMoveUp: {
+                                    viewModel.moveDeveloperEntrypoint(entrypoint, visibleEntrypointIDs: visibleEntrypointIDs, offset: -1)
+                                },
+                                onMoveDown: {
+                                    viewModel.moveDeveloperEntrypoint(entrypoint, visibleEntrypointIDs: visibleEntrypointIDs, offset: 1)
+                                },
+                                onEdit: {
+                                    editingDraft = DeveloperEntrypointDraft(entrypoint: entrypoint)
+                                }
+                            )
+                            if index < rows.count - 1 {
+                                Divider()
+                            }
+                        }
+                    }
+                }
+            }
+
+            DeveloperMenuPreviewCard(items: developerPreviewItems)
+
+            DeveloperHintBanner()
+        }
+        .sheet(item: $editingDraft) { draft in
+            DeveloperEntrypointEditorSheet(
+                draft: draft,
+                existingEntrypoints: viewModel.config.developerEntrypoints,
+                onSelectApplication: { currentDraft in
+                    viewModel.makeDeveloperEntrypointDraftFromSelectedApplication(replacing: currentDraft)
+                }
+            ) { savedDraft in
+                viewModel.upsertDeveloperEntrypoint(savedDraft.makeEntrypoint(), replacing: savedDraft.originalID)
+                editingDraft = nil
+            } onCancel: {
+                editingDraft = nil
+            }
+        }
+        .onChange(of: viewModel.developerEntrypointAddRequest) { _, _ in
+            editingDraft = DeveloperEntrypointDraft()
+        }
+    }
+
+    private var developerPreviewItems: [FinderMenuItem] {
+        let enabledActions = viewModel.config.actions
+            .filter { $0.kind == .openInApp && $0.isEnabled }
+            .sorted { $0.order < $1.order }
+
+        let items = enabledActions.compactMap { action -> FinderMenuItem? in
+            guard
+                let entrypointID = action.payload.developerEntrypointID,
+                let entrypoint = viewModel.config.developerEntrypoints.first(where: { $0.id == entrypointID })
+            else {
+                return nil
+            }
+            return FinderMenuItem(
+                title: entrypoint.title,
+                icon: entrypoint.displayIcon,
+                tint: developerEntryTint(for: entrypoint),
+                id: action.id
+            )
+        }
+
+        guard items.count > 9 else {
+            return items
+        }
+        return Array(items.prefix(9)) + [FinderMenuItem(title: "更多...")]
+    }
+}
+
+struct DeveloperTableHeader: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            Text("排序").frame(width: 58, alignment: .center)
+            Text("名称").frame(width: 200, alignment: .leading)
+            Text("目标方式").frame(maxWidth: .infinity, alignment: .leading)
+            Text("快捷键").frame(width: 64, alignment: .leading)
+            Text("启用").frame(width: 60, alignment: .center)
+            Text("操作").frame(width: 76, alignment: .center)
+        }
+        .settingsTableHeaderStyle()
+    }
+}
+
+struct DeveloperTableRow: View {
+    let entrypoint: DeveloperEntrypoint
+    @ObservedObject var viewModel: SettingsViewModel
+    let canMoveUp: Bool
+    let canMoveDown: Bool
+    let onMoveUp: () -> Void
+    let onMoveDown: () -> Void
+    let onEdit: () -> Void
+
+    private var matchingAction: RightClickAction? {
+        viewModel.config.actions.first {
+            $0.kind == .openInApp && $0.payload.developerEntrypointID == entrypoint.id
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            SortStepControls(
+                canMoveUp: canMoveUp,
+                canMoveDown: canMoveDown,
+                onMoveUp: onMoveUp,
+                onMoveDown: onMoveDown
+            )
+            .frame(width: 58)
+
+            Button(action: onEdit) {
+                HStack(spacing: 10) {
+                    DeveloperEntryIcon(entrypoint: entrypoint)
+
+                    Text(entrypoint.title)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(SettingsTheme.ink)
+                        .lineLimit(1)
+                }
+            }
+            .buttonStyle(.plain)
+            .frame(width: 200, alignment: .leading)
+            .help(entrypoint.title)
+
+            Text(entrypoint.targetMode.displayName)
+                .font(.system(size: 12))
+                .foregroundStyle(SettingsTheme.muted)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text(developerEntryHotkey(for: entrypoint))
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(SettingsTheme.muted)
+                .lineLimit(1)
+                .frame(width: 64, alignment: .leading)
+
+            Toggle("", isOn: Binding(
+                get: { matchingAction?.isEnabled ?? false },
+                set: { isEnabled in
+                    guard let actionID = matchingAction?.id else { return }
+                    viewModel.setActionEnabled(isEnabled, actionID: actionID)
+                }
+            ))
+            .toggleStyle(.switch)
+            .labelsHidden()
+            .disabled(matchingAction == nil)
+            .frame(width: 60)
+
+            HStack(spacing: 8) {
+                RowIconButton(
+                    systemImage: "pencil",
+                    accessibilityLabel: "编辑 \(entrypoint.title)",
+                    helpText: "编辑入口"
+                ) {
+                    onEdit()
+                }
+
+                RowIconButton(
+                    systemImage: "trash",
+                    accessibilityLabel: "删除 \(entrypoint.title)",
+                    helpText: "删除入口",
+                    tone: .destructive
+                ) {
+                    viewModel.deleteDeveloperEntrypoint(entrypoint)
+                }
+            }
+            .frame(width: 76)
+        }
+        .padding(.horizontal, 18)
+        .frame(height: 52)
+        .hoverRowBackground()
+        .opacity((matchingAction?.isEnabled ?? true) ? 1 : 0.52)
+    }
+}
+
+struct DeveloperEntryIcon: View {
+    let entrypoint: DeveloperEntrypoint
+
+    var body: some View {
+        MenuIconView(
+            icon: entrypoint.displayIcon,
+            tint: developerEntryTint(for: entrypoint),
+            size: 22,
+            font: .system(size: 16, weight: .semibold)
+        )
+            .frame(width: 28, height: 28)
+            .background(developerEntryTint(for: entrypoint).opacity(0.1), in: RoundedRectangle(cornerRadius: 7))
+    }
+}
+
+struct DeveloperMenuPreviewCard: View {
+    let items: [FinderMenuItem]
+
+    var body: some View {
+        PreviewSection(
+            rootItems: rootMenuItems,
+            submenuTitle: "应用快捷入口",
+            submenuItems: submenuItems
+        ) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("右键菜单预览")
+                    .font(.headline)
+                    .foregroundStyle(SettingsTheme.ink)
+                Text("在 Finder 中右键时，启用的入口会出现在「应用快捷入口」子菜单中。")
+                    .font(.callout)
+                    .foregroundStyle(SettingsTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var rootMenuItems: [FinderMenuItem] {
+        FinderPreviewRootMenu.standardContainerMenu(
+            highlighting: FinderMenuItem(
+                title: "应用快捷入口",
+                systemImage: "chevron.left.forwardslash.chevron.right",
+                tint: SettingsTheme.accent,
+                isHighlighted: true,
+                hasSubmenu: true
+            )
+        )
+    }
+
+    private var submenuItems: [FinderMenuItem] {
+        items.isEmpty ? [FinderMenuItem(title: "暂无启用入口")] : items
+    }
+}
+
+struct DeveloperHintBanner: View {
+    var body: some View {
+        SettingsHintBanner(
+            icon: "lightbulb",
+            title: "提示：",
+            message: "在 Finder 中右键任意位置，选择「应用快捷入口」即可看到以上快捷入口。"
+        )
+    }
+}
+
+private func developerEntryTint(for entrypoint: DeveloperEntrypoint) -> Color {
+    let value = "\(entrypoint.title) \(entrypoint.bundleIdentifier)".lowercased()
+    if value.contains("terminal") || value.contains("iterm") { return .green }
+    if value.contains("github") { return SettingsTheme.ink }
+    if value.contains("docker") { return .blue }
+    if value.contains("postman") { return .orange }
+    if value.contains("folder") || value.contains("目录") { return .blue }
+    return SettingsTheme.accent
+}
+
+private func developerEntryHotkey(for entrypoint: DeveloperEntrypoint) -> String {
+    let value = "\(entrypoint.title) \(entrypoint.bundleIdentifier)".lowercased()
+    if value.contains("vscode") || value.contains("visual studio") { return "⌥⌘ V" }
+    if value.contains("cursor") { return "⌥⌘ C" }
+    if value.contains("webstorm") { return "⌥⌘ W" }
+    if value.contains("terminal") || value.contains("iterm") { return "⌥⌘ T" }
+    if value.contains("github") { return "⌥⌘ G" }
+    if value.contains("docker") { return "⌥⌘ D" }
+    if value.contains("postman") { return "⌥⌘ P" }
+    if value.contains("logs") { return "⌥⌘ L" }
+    if value.contains("config") { return "⌥⌘ E" }
+    return "⌥⌘ \(entrypoint.title.prefix(1).uppercased())"
+}
+
+extension DeveloperEntrypoint {
+    var displayIcon: MenuIconDescriptor {
+        if let iconSymbol, !iconSymbol.isEmpty {
+            return .systemSymbol(iconSymbol)
+        }
+        return .appBundleIdentifier(bundleIdentifier)
+    }
+}

@@ -1,0 +1,644 @@
+# Journal - iheeleme (Part 1)
+
+> AI development session journal
+> Started: 2026-06-25
+
+---
+
+
+
+## Session 1: RightTool Finder menu XPC smoke test
+
+**Date**: 2026-06-26
+**Task**: RightTool Finder menu XPC smoke test
+**Branch**: `main`
+
+### Summary
+
+Packaged a valid Finder Sync extension in the preview build, fixed Finder menu item dispatch through tag-based pending actions, enabled ActionRunner XPC execution for local smoke tests, and verified Finder right-click Markdown creation plus operation logging.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `096526c` | (see git log) |
+| `00a9365` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 2: Fix reinstall context menu auto injection
+
+**Date**: 2026-06-27
+**Task**: Fix reinstall context menu auto injection
+**Branch**: `main`
+
+### Summary
+
+Verified and archived the reinstall self-healing fix: Finder extension bootstraps configuration before loading monitored directories, default bookmarks map to the real user home, missing defaults are repaired, PlugInKit registers the packaged appex before enablement, and regression/package checks passed.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5bd6113` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 3: Fill Trellis project guidelines
+
+**Date**: 2026-06-27
+**Task**: Fill Trellis project guidelines
+**Branch**: `main`
+
+### Summary
+
+Filled RightTool backend and frontend Trellis specs from the actual SwiftPM/macOS codebase: documented Core storage, ActionRunner, Finder extension, XPC, packaging, SwiftUI settings state, component, type-safety, and quality conventions; removed template placeholders and verified with diff checks plus SwiftPM CI.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `99ce051` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 4: Complete settings page interaction
+
+**Date**: 2026-06-27
+**Task**: Complete settings page interaction
+**Branch**: `main`
+
+### Summary
+
+Completed the settings page interaction task: verified configuration status overview, responsive section navigation, directory/action/template/developer entry editing, placement and visibility controls, operation history display, save/reset/delete feedback, preview packaging, and user-confirmed manual settings-window validation.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8896c71` | (see git log) |
+| `adda35c` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 5: Command template runner and authorization fixes
+
+**Date**: 2026-06-27
+**Task**: Command template runner and authorization fixes
+**Branch**: `main`
+
+### Summary
+
+Implemented command templates with live terminal output, dark-mode settings fixes, Finder-triggered command windows, and main-app-owned directory authorization to avoid repeated macOS other-app-data prompts.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4fc45ae` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 6: Developer entrypoint app picker
+
+**Date**: 2026-06-27
+**Task**: Developer entrypoint app picker
+**Branch**: `main`
+
+### Summary
+
+Implemented app-based selection for developer shortcut entries: add/edit flows now use a local .app picker, auto-read bundle identifiers, prevent duplicate apps, update UI copy, and record the frontend guideline.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `79e94a4` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 7: Dynamic developer entrypoint target
+
+**Date**: 2026-06-28
+**Task**: Dynamic developer entrypoint target
+**Branch**: `main`
+
+### Summary
+
+Implemented dynamic developer shortcut targets, app-picker based entrypoints, dark-mode fixes, command authorization fixes, and CLI-backed workspace opening for Codex and similar developer apps. Packaged and installed RightTool locally; SwiftPM checks remain blocked by the known PackageDescription manifest linker issue while package-macos debug succeeds.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `658a7f8` | (see git log) |
+| `5e73b6b` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 8: RightClick Pro DMG distribution engineering
+
+**Date**: 2026-06-28
+**Task**: RightClick Pro DMG distribution engineering
+**Branch**: `main`
+
+### Summary
+
+Completed the RightClick Pro distribution task: opt-in internal DMG packaging, RightClickPro naming and identifiers, runtime Finder extension repair, CI packaging controls, docs/spec coverage, and final local package/DMG smoke verification.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `80160b7` | (see git log) |
+| `25b0a65` | (see git log) |
+| `3065cdf` | (see git log) |
+| `8251709` | (see git log) |
+| `718c7f0` | (see git log) |
+| `2aef346` | (see git log) |
+| `1c3a4f8` | (see git log) |
+| `604c100` | (see git log) |
+| `292406f` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 9: Unify Full Disk Access authorization check
+
+**Date**: 2026-07-01
+**Task**: Unify Full Disk Access authorization check
+**Branch**: `develop`
+
+### Summary
+
+Removed automatic Full Disk Access probes from settings bootstrap and app activation, kept the overview button as the single user-initiated permission check entry, updated local specs, verified build/test/package, and installed the refreshed app to /Applications.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1999ac5` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 10: Avoid other app data permission prompts
+
+**Date**: 2026-07-03
+**Task**: Avoid other app data permission prompts
+**Branch**: `develop`
+
+### Summary
+
+Stopped Full Disk Access representative checks from reading Mail, Messages, Safari, TCC, app containers, or group containers; removed the overview permission check button; kept System Settings as the single authorization entry; added a regression test that the representative check performs no directory reads; verified build, tests, packaging, and installed the refreshed app to /Applications.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `bd419af` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 11: Avoid first-launch other app data prompts
+
+**Date**: 2026-07-03
+**Task**: Avoid first-launch other app data prompts
+**Branch**: `develop`
+
+### Summary
+
+Changed default runtime storage from App Group / Group Containers to the real-user Application Support directory, removed App Group entitlements from packaged app, extension, and XPC, added a narrow Application Support sandbox exception for app-owned state, documented the new storage model, verified tests and packaging, and installed the refreshed app to /Applications.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `628ca6f` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 12: Rewrite open source README
+
+**Date**: 2026-07-03
+**Task**: Rewrite open source README
+**Branch**: `develop`
+
+### Summary
+
+Rewrote the Chinese README in the style of jlcodes99/cockpit-tools with overview, feature sections, install, troubleshooting, build, architecture, contribution, acknowledgements, license, and disclaimer; added a LICENSE file referencing CC BY-NC-SA 4.0 and non-commercial authorization terms.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4474fcc` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 13: Add README project screenshot
+
+**Date**: 2026-07-05
+**Task**: Add README project screenshot
+**Branch**: `main`
+
+### Summary
+
+Added a Computer Use-captured RightClick Pro settings screenshot to README and stored the image under docs/assets.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `dd4cb63` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+## Session 14: Ship macOS 15 packaging fix
+
+**Date**: 2026-08-13
+**Task**: Ship macOS 15 packaging fix
+**Branch**: `codex/ship-macos15-packaging-fix`
+
+### Summary
+
+Integrated the macOS 14 deployment-target guard onto current develop, diagnosed the macOS 15 release compiler failure with gh, main-actor isolated the AppKit icon cache, and published verified arm64/x86_64 v0.1.4 DMGs.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f78fbf3` | (see git log) |
+| `d12f72a` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 15: Consolidate macOS packaging branches
+
+**Date**: 2026-08-13
+**Task**: Consolidate macOS packaging branches
+**Branch**: `develop`
+
+### Summary
+
+Fast-forwarded develop with completed packaging task records, verified v0.1.4 remained immutable, and removed superseded local and remote macOS packaging fix branches.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `acde16b` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 16: 修复 Finder 菜单点击无响应
+
+**Date**: 2026-08-16
+**Task**: 修复 Finder 菜单点击无响应
+**Branch**: `codex/issue-2-finder-actions`
+
+### Summary
+
+按需解析 ActionRunner 目录 bookmark，避免无关坏 bookmark 阻断剪切等动作；新增三条回归测试，Core/Finder 严格 typecheck 与基线 harness 通过，SwiftPM manifest 受本机 CommandLineTools 链接错误阻塞。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `11705e0` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 17: Kimi 风格设置界面优化
+
+**Date**: 2026-09-06
+**Task**: Kimi 风格设置界面优化
+**Branch**: `task/settings-visual-unify`
+
+### Summary
+
+完成 RightClick Pro 原生 macOS 设置界面 Kimi 风格升级：中性灰白主题与蓝色强调、侧栏和工具栏、真实配置统计、表格和 Finder 菜单预览、编辑焦点与校验状态。通过严格 Swift 6 直接类型检查、备用预览打包、签名校验和亮暗色原生页面检查。SwiftPM 标准构建仍受本机 PackageDescription 链接错误阻塞。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2449b90` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 18: 增加设置主题切换
+
+**Date**: 2026-09-06
+**Task**: 增加设置主题切换
+**Branch**: `task/settings-visual-unify`
+
+### Summary
+
+在设置概览页增加跟随系统、浅色、深色三段式主题切换。主题偏好通过 UserDefaults 持久化，SwiftUI preferredColorScheme 与 AppKit 窗口外观同步更新。严格 Swift 6 直接类型检查、macOS 14 备用预览打包、签名校验和亮暗色原生交互验证通过；SwiftPM 标准构建仍受本机 PackageDescription 链接错误阻塞。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `94c3065` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 19: 更新 v0.2.0 README 与界面截图
+
+**Date**: 2026-09-12
+**Task**: 更新 v0.2.0 README 与界面截图
+**Branch**: `task/settings-visual-unify`
+
+### Summary
+
+更新发布说明、双架构下载与功能边界；从当前 SwiftUI 源码隔离渲染浅色概览、深色概览与菜单管理三图，逐张检查和引用校验通过，已推送 main/develop。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `35c5d4b` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

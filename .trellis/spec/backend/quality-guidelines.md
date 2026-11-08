@@ -1,0 +1,1150 @@
+# Quality Guidelines
+
+> Code quality standards for backend development.
+
+---
+
+## Overview
+
+RightClick quality checks center on SwiftPM compilation/tests, Finder extension packaging validation, and source-backed contracts. The project currently has no lint tool beyond Swift compiler checks and `git diff --check`.
+
+---
+
+## Forbidden Patterns
+
+- Finder extension performing file mutations directly. Route all mutations through XPC to `ActionRunner`.
+- Finder menu leaf items relying on `representedObject` for action payloads. Finder copies menu items and may drop it; use stable `tag` values.
+- Default monitored directories derived from the sandbox container home.
+- Packaging with `macos-latest` runner labels. Use explicit runner labels from `.github/workflows/package-macos.yml`.
+- Adding a new action kind without updating Core execution, menu presentation, settings display/editing, and tests.
+- Direct storage writes from SwiftUI child views.
+
+---
+
+## Required Patterns
+
+- Shared behavior belongs in `RightClickCore`.
+- File mutations must validate authorized paths before touching disk.
+- Storage writes must use `JSONFileStore` or `JSONLineOperationLog`.
+- Finder extension startup must install fallback/cached config before assigning `FIFinderSyncController.default().directoryURLs`; disk reads and durable bootstrap repair should run outside startup's cold path and outside the first menu callback.
+- Menu icon semantics must come from `MenuIconResolver` in Core and be rendered at the UI/process boundary.
+- Test doubles should use existing in-memory/recording types where possible.
+
+---
+
+## Testing Requirements
+
+- Run `scripts/ci-swift-check.sh debug` for Swift changes.
+- Run `scripts/package-macos.sh debug` for App/Finder extension/XPC/packaging changes.
+- Run targeted tests for changed Core behavior, for example:
+  ```bash
+  swift test --filter MenuBuilderTests
+  swift test --filter ActionRunnerTests
+  swift test --filter ConfigurationBootstrapperTests
+  ```
+- Run `bash -n scripts/ci-swift-check.sh scripts/package-macos.sh` after shell script edits.
+- If AppPreview imports a new Apple framework, update and smoke-test the direct `swiftc` fallback in `scripts/package-macos.sh` as well as the SwiftPM build path.
+- Run `ruby -e 'require "yaml"; YAML.load_file(".github/workflows/package-macos.yml")'` after workflow edits.
+- In tests, compare directory URL semantics with `standardizedFileURL.path` when trailing slash/resource identity is irrelevant; macOS and Swift toolchain versions can differ on directory URL trailing slash preservation.
+
+### Scenario: macOS Deployment Target for Preview Packaging
+
+#### 1. Scope / Trigger
+
+- Trigger: changes to `.github/workflows/package-macos.yml`, `scripts/ci-swift-check.sh`, `scripts/package-macos.sh`, SwiftPM preview bundle assembly, direct `swiftc` packaging, Xcode archive packaging, or bundled Info.plist generation.
+- This is an infra compatibility contract because GitHub-hosted runner OS/SDK upgrades can silently raise Mach-O `minos` for the app, Finder Sync extension, ActionRunner XPC, or the shared `libRightClickCore.dylib`.
+
+#### 2. Signatures
+
+- CI env:
+  ```yaml
+  RIGHTCLICKPRO_MACOS_DEPLOYMENT_TARGET: "14.0"
+  MACOSX_DEPLOYMENT_TARGET: "14.0"
+  ```
+- Shell env default:
+  ```bash
+  RIGHTCLICKPRO_MACOS_DEPLOYMENT_TARGET="${RIGHTCLICKPRO_MACOS_DEPLOYMENT_TARGET:-${MACOSX_DEPLOYMENT_TARGET:-14.0}}"
+  export MACOSX_DEPLOYMENT_TARGET="$RIGHTCLICKPRO_MACOS_DEPLOYMENT_TARGET"
+  ```
+- Build target:
+  ```bash
+  swift build --triple "$(uname -m)-apple-macosx$RIGHTCLICKPRO_MACOS_DEPLOYMENT_TARGET"
+  swiftc -target "$(uname -m)-apple-macosx$RIGHTCLICKPRO_MACOS_DEPLOYMENT_TARGET" ...
+  ```
+
+#### 3. Contracts
+
+- GitHub Actions must use explicit macOS runner labels, not `macos-latest`; prefer `macos-15` for arm64 and `macos-15-intel` for x86_64 while RightClick supports macOS 14+.
+- `RIGHTCLICKPRO_MACOS_DEPLOYMENT_TARGET` is the single packaging minimum. `MACOSX_DEPLOYMENT_TARGET`, SwiftPM `--triple`, direct `swiftc -target`, Xcode `MACOSX_DEPLOYMENT_TARGET`, and generated `LSMinimumSystemVersion` values must match it.
+- Manual `swiftc` builds for `RightClickCore` and `RightClickFinderExtension` must never rely on the host default target. On a macOS 26 runner, that can create `libRightClickCore.dylib built for macOS 26.0`, which crashes the Finder extension on macOS 15.
+
+#### 4. Validation & Error Matrix
+
+- Invalid `RIGHTCLICKPRO_MACOS_DEPLOYMENT_TARGET` format -> exit 64 before building.
+- Unsupported host architecture -> exit 64 before building.
+- Packaged Mach-O missing a readable `LC_BUILD_VERSION minos` or legacy `LC_VERSION_MIN_MACOSX version` -> exit 65.
+- Packaged Mach-O deployment target differs from `RIGHTCLICKPRO_MACOS_DEPLOYMENT_TARGET` -> exit 65 and do not publish the artifact.
+- Workflow changed -> parse `.github/workflows/package-macos.yml` with Ruby YAML.
+- Shell script changed -> run `bash -n scripts/ci-swift-check.sh scripts/package-macos.sh`.
+
+#### 5. Good/Base/Bad Cases
+
+- Good: building on `macos-15` with `RIGHTCLICKPRO_MACOS_DEPLOYMENT_TARGET=14.0` produces `minos 14.0` for the app executable, both ActionRunner XPC binaries, Finder Sync executable, and the shared `libRightClickCore.dylib`.
+- Good: a future macOS 26 runner can still be used only if the same deployment-target env, SwiftPM `--triple`, direct `swiftc -target`, and `otool` validation remain in place.
+- Base: local developers can override `RIGHTCLICKPRO_MACOS_DEPLOYMENT_TARGET` for self-tests, but generated Info.plists and Mach-O validation must follow the override consistently.
+- Bad: changing only `LSMinimumSystemVersion` while leaving direct `swiftc` to infer the host target.
+- Bad: relying on `Package.swift` `.macOS(.v14)` to cover manually compiled dylibs or extension executables.
+
+#### 6. Tests Required
+
+- Run `scripts/ci-swift-check.sh debug`.
+- Run `scripts/package-macos.sh debug`.
+- For DMG artifact behavior, run `RIGHTCLICKPRO_PACKAGE_DMG=1 scripts/package-macos.sh debug`.
+- Spot-check at least the core dylib and Finder extension executable:
+  ```bash
+  otool -l "dist/staging/RightClick.app/Contents/Frameworks/libRightClickCore.dylib" | awk '/LC_BUILD_VERSION/{seen=1} seen && /minos/{print $2; exit}'
+  otool -l "dist/staging/RightClick.app/Contents/PlugIns/RightClickFinderExtension.appex/Contents/MacOS/RightClickFinderExtension" | awk '/LC_BUILD_VERSION/{seen=1} seen && /minos/{print $2; exit}'
+  ```
+- Run `git diff --check`.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+```bash
+swiftc -emit-library Sources/RightClickCore/*.swift -o "$build_dir/libRightClickCore.dylib"
+```
+
+Correct:
+```bash
+swiftc \
+  -target "$(uname -m)-apple-macosx$RIGHTCLICKPRO_MACOS_DEPLOYMENT_TARGET" \
+  -emit-library \
+  Sources/RightClickCore/*.swift \
+  -o "$build_dir/libRightClickCore.dylib"
+```
+
+---
+
+### Scenario: Swift 6 Strict Concurrency Boundaries
+
+#### 1. Scope / Trigger
+
+- Trigger: changes to shared Core Codable models, XPC request/result payloads, `DispatchQueue` callbacks, `Timer` callbacks, `Process` pipe handlers, Finder Sync controllers, or SwiftUI/AppKit view models.
+- This is a cross-process and cross-thread contract because Core payloads move through Finder extension, menu-bar app, ActionRunner XPC, JSON storage, and Foundation `@Sendable` callback boundaries.
+
+#### 2. Signatures
+
+- Shared value payloads crossing process/thread boundaries must be explicitly `Sendable`:
+  ```swift
+  public struct FinderContext: Codable, Equatable, Sendable
+  public struct ActionResult: Codable, Equatable, Sendable
+  public struct SystemMaintenanceResult: Codable, Equatable, Sendable
+  ```
+- UI state owners that touch AppKit/SwiftUI state must be main-actor isolated:
+  ```swift
+  @MainActor
+  final class SettingsViewModel: NSObject, ObservableObject
+  ```
+- Services captured by Foundation `@Sendable` callbacks may use unchecked conformance only when mutable state has an explicit synchronization boundary:
+  ```swift
+  public final class FinderSyncController: FIFinderSync, @unchecked Sendable
+  ```
+
+#### 3. Contracts
+
+- Core models used in XPC, JSON handoff, menu presentation, and maintenance responses should conform to `Sendable` when all stored properties are value-safe.
+- `Result<SomeSendableValue, Error>` must not be captured directly into a `DispatchQueue.main.async` or other `@Sendable` closure. Convert failures to a `String` or a local `Sendable` response enum before crossing the boundary.
+- AppKit/SwiftUI objects that mutate `@Published`, `NSApplication`, `NSWindow`, or settings view state should be `@MainActor`, not `@unchecked Sendable`.
+- `@unchecked Sendable` requires a short comment explaining the synchronization model. Use it for service/controller objects only when mutable state is protected by `NSLock`, a serial queue, or a main-thread-only lifecycle.
+- Direct `swiftc` target checks that import `RightClickCore` should first rebuild a temporary Core module so dependent targets do not read stale Sendable metadata.
+
+#### 4. Validation & Error Matrix
+
+- `consider making struct ... conform to Sendable` -> add `Sendable` to the value model and recursively to its stored value types.
+- `capture of self with non-Sendable type ... in a @Sendable closure` for UI/view-model code -> prefer `@MainActor` on the owner and hop with `Task { @MainActor ... }` when the callback itself is nonisolated.
+- `capture of Result<..., Error>` in a `@Sendable` closure -> map to a Sendable response enum before dispatching to the main queue.
+- `static property shared is not concurrency-safe` for UI coordinators -> isolate the coordinator with `@MainActor` when it owns AppKit windows or UI state.
+- `cannot access property ... with a non-Sendable type 'Timer?' from nonisolated deinit` -> replace repeating `Timer` state with a cancellable `Task<Void, Never>` or another Sendable cancellation token.
+- `@unchecked Sendable` without lock/serial-queue/main-actor ownership -> bug; redesign or add a real synchronization boundary before suppressing the compiler check.
+
+#### 5. Good/Base/Bad Cases
+
+- Good: `FinderContext`, `ActionResult`, `MenuPresentation`, and `SystemMaintenanceResult` are Sendable because they are pure value contracts.
+- Good: `FinderSyncController` is `@unchecked Sendable` only because menu/cache state is constrained to the main thread and a dedicated serial queue.
+- Good: `SettingsViewModel` is `@MainActor` because it owns UI state.
+- Base: a local response enum such as `XPCClientResponse: Sendable` carries a decoded value or an error string from an XPC callback into the main actor.
+- Bad: capturing `Result<SomeValue, Error>` directly in `DispatchQueue.main.async`.
+- Bad: adding `@unchecked Sendable` to a SwiftUI view model instead of main-actor isolating it.
+- Bad: storing a repeating `Timer?` in a `@MainActor` view model and invalidating it from `deinit`; Swift 6 treats `deinit` as nonisolated.
+- Bad: marking a class `@unchecked Sendable` only to silence CI without documenting and verifying state synchronization.
+
+#### 6. Tests Required
+
+- Run strict concurrency type checks for changed Swift targets:
+  ```bash
+  swiftc -typecheck -swift-version 6 -strict-concurrency=complete -warnings-as-errors Sources/RightClickCore/*.swift
+  swiftc -emit-module -parse-as-library -module-name RightClickCore \
+    -emit-module-path /tmp/righttool-sendable-check/RightClickCore.swiftmodule \
+    -swift-version 6 -strict-concurrency=complete -warnings-as-errors Sources/RightClickCore/*.swift
+  swiftc -typecheck -I /tmp/righttool-sendable-check \
+    -swift-version 6 -strict-concurrency=complete -warnings-as-errors Sources/RightClickFinderExtension/FinderSyncController.swift
+  swiftc -typecheck -parse-as-library -I /tmp/righttool-sendable-check \
+    -swift-version 6 -strict-concurrency=complete -warnings-as-errors Sources/RightClickAppPreview/*.swift
+  ```
+- Run `git diff --check`.
+- Run `scripts/package-macos.sh debug` after App/Finder/XPC concurrency fixes.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+```swift
+actionRunnerClient.perform(request) { result in
+    DispatchQueue.main.async {
+        switch result {
+        case .failure(let error):
+            self.status = error.localizedDescription
+        }
+    }
+}
+```
+
+Correct:
+```swift
+actionRunnerClient.perform(request) { result in
+    let response = ActionResultClientResponse(result)
+    DispatchQueue.main.async { [response] in
+        // response is Sendable: decoded ActionResult or failure string.
+    }
+}
+```
+
+Wrong:
+```swift
+final class SettingsViewModel: ObservableObject, @unchecked Sendable
+```
+
+Correct:
+```swift
+@MainActor
+final class SettingsViewModel: NSObject, ObservableObject
+```
+
+---
+
+## Code Review Checklist
+
+- Does the change preserve process boundaries: Finder extension renders, XPC transports, ActionRunner mutates?
+- Are new Codable fields backward compatible with existing JSON where practical?
+- Are path and bookmark changes tested with temporary directories?
+- Does settings UI mutate through `SettingsViewModel` commands?
+- Does packaging still produce a discoverable Finder Sync `.appex` and both ActionRunner XPC placements?
+
+### Scenario: Global Finder Scope and Full Disk Access Runtime
+
+#### 1. Scope / Trigger
+
+- Trigger: changes to `RightClickConfig`, `FinderSyncScope`, `FinderSyncController`, `ActionRunner`, directory bookmarks, or file-operation permission handling.
+- This is a cross-layer contract because config JSON, Finder Sync menu visibility, XPC action execution, settings UI copy, and operation logs must describe the same authorization model.
+
+#### 2. Signatures
+
+- Persisted config v2:
+  ```swift
+  RightClickConfig(schemaVersion: 2, shortcutDirectoryIDs: ["desktop", "downloads"])
+  ```
+- Finder Sync scope:
+  ```swift
+  FinderSyncScope.syncRoots() == [URL(fileURLWithPath: "/")] + 可浏览的已挂载卷根目录
+  ```
+- Runtime failure copy:
+  ```swift
+  FullDiskAccessAdvisor.userFacingMessage(for: error)
+  ```
+- Runtime permission probe:
+  ```swift
+  SystemMaintenanceRequest(task: .checkFullDiskAccess)
+  SystemMaintenanceResult(hasFullDiskAccess: Bool?)
+  ```
+  The default implementation is intentionally non-invasive and must not read Mail, Messages, Safari, TCC, or other app data directories.
+
+#### 3. Contracts
+
+- `shortcutDirectoryIDs` is only a shortcut-target list for directory menu actions.
+- `monitoredDirectoryIDs` is legacy decode input only and must not be encoded in new config JSON.
+- v1 `commonDirectoryIDs` migrates to v2 `shortcutDirectoryIDs`; v1 `monitoredDirectoryIDs` is discarded.
+- Finder menus are globally visible once config is loaded; individual action visibility still depends on `ActionVisibility` and invocation shape.
+- Finder Sync 的监视子树不跨越文件系统边界，`directoryURLs` 必须同时包含 `/` 与所有可浏览的已挂载卷根目录，并在卷挂载/卸载/重命名时重新注册；只注册 `/` 会让外置盘、磁盘映像和网络卷没有右键菜单。枚举卷时不要用 `.skipHiddenVolumes`，Finder 未展示的外置盘同样是 `isHidden == true`，应按 `volumeIsBrowsable` 过滤。
+- File actions attempt real file operations and let macOS permission results determine success or failure.
+- Permission-like failures must include Full Disk Access guidance.
+- Settings overview must not probe Full Disk Access by reading protected application data. macOS does not provide a non-invasive status API, and representative reads can trigger "access data from other apps" prompts.
+- `FullDiskAccessAdvisor.checkRepresentativeAccess()` must not call `contentsOfDirectory`, `Data(contentsOf:)`, or similar reads on Mail, Messages, Safari, TCC, `~/Library/Containers`, or `~/Library/Group Containers`.
+- Overview should present a single System Settings shortcut for Full Disk Access. Runtime file actions remain the real permission boundary and should surface `FullDiskAccessAdvisor.userFacingMessage(for:)` on permission failures.
+
+#### 4. Validation & Error Matrix
+
+- Old config has `commonDirectoryIDs` -> decode into `shortcutDirectoryIDs`.
+- Old config has `monitoredDirectoryIDs` only -> do not use it for menu scope or runtime authorization.
+- File operation fails with `EPERM`, `EACCES`, or Cocoa no-permission errors -> append Full Disk Access guidance.
+- Finder context outside shortcut directories -> still build a menu when actions match the invocation.
+- ActionRunner permission probe returns `hasFullDiskAccess == false` from the default checker -> it means invasive probing was skipped, not that authorization is definitely missing.
+- ActionRunner XPC probe fails or omits `hasFullDiskAccess` -> overview shows an error/unavailable state instead of claiming authorization is missing.
+
+#### 5. Good/Base/Bad Cases
+
+- Good: right-clicking `/System` still shows eligible menu items; execution may fail with Full Disk Access guidance.
+- Good: new installs default to Desktop and Downloads shortcuts only.
+- Good: opening settings does not touch Mail, Messages, Safari, TCC, or other app containers; the overview only links to System Settings.
+- Base: existing custom bookmark entries stay in `bookmarks.json` during bootstrap.
+- Bad: adding a new check that hides Finder menus outside `shortcutDirectoryIDs`.
+- Bad: 只把 `directoryURLs` 设为 `["/"]`，导致外置盘、磁盘映像和网络卷没有右键菜单。
+- Bad: reintroducing `AuthorizedPathValidator` or any configured-directory allowlist as the file-action boundary.
+- Bad: probing Full Disk Access by reading `~/Library/Mail`, `~/Library/Messages`, `~/Library/Safari`, `~/Library/Application Support/com.apple.TCC`, app containers, or group containers.
+
+#### 6. Tests Required
+
+- Codable migration: v1 `commonDirectoryIDs` -> v2 `shortcutDirectoryIDs`; old keys omitted on encode.
+- Finder scope: `FinderSyncScope.syncRoots()` returns `/` plus every browsable mounted volume root, without duplicates.
+- ActionRunner: file actions succeed in temporary directories even when `shortcutDirectoryIDs` is empty.
+- Bootstrap: default bookmarks exclude Documents and Code for new installs while preserving existing bookmarks.
+- SystemMaintenanceService: `.checkFullDiskAccess` returns true and false `hasFullDiskAccess` values without invoking shell commands.
+- `FullDiskAccessAdvisor.checkRepresentativeAccess()` does not call `contentsOfDirectory` or otherwise read protected app data.
+- Packaging smoke: installed app launches and the overview opens System Settings without causing an "access data from other apps" prompt.
+- UI lifecycle smoke: opening the settings window or reactivating the app does not send `.checkFullDiskAccess`.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+```swift
+let validator = AuthorizedPathValidator(authorizedDirectories: shortcutURLs)
+try validator.validate(request.context.targetDirectory)
+```
+
+Correct:
+```swift
+let result = try fileService.createFile(template: template, in: request.context.targetDirectory)
+```
+
+Wrong:
+```swift
+if FullDiskAccessAdvisor.checkRepresentativeAccess() {
+    fullDiskAccessStatusMessage = "已授权"
+}
+```
+inside the sandboxed settings app.
+
+Correct:
+```swift
+openFullDiskAccessSettings()
+// Runtime actions surface FullDiskAccessAdvisor.userFacingMessage(for:) only
+// when macOS actually denies the file operation.
+```
+
+Wrong:
+```swift
+let protectedURLs = [
+    home.appendingPathComponent("Library/Mail"),
+    home.appendingPathComponent("Library/Messages"),
+    home.appendingPathComponent("Library/Safari"),
+    home.appendingPathComponent("Library/Application Support/com.apple.TCC")
+]
+let hasAccess = protectedURLs.contains {
+    (try? FileManager.default.contentsOfDirectory(atPath: $0.path)) != nil
+}
+```
+
+Correct:
+```swift
+public static func checkRepresentativeAccess(...) -> Bool {
+    // No non-invasive status API exists; do not read other app data to infer it.
+    false
+}
+```
+
+### Scenario: File Operation Actions
+
+#### 1. Scope / Trigger
+
+- Trigger: changes to `.copyPath`, `.hideItems`, `.unhideItems`, `.deletePermanently`, `FileOperationService`, `PathClipboardWriting`, or Finder menu invocation mapping.
+- This is a cross-process contract because Finder sends `ActionRequest` through XPC, and `ActionRunner.xpc` performs the file operation while the Finder extension owns the irreversible-delete confirmation.
+
+#### 2. Signatures
+
+- Action kinds:
+  ```swift
+  case copyPath
+  case hideItems
+  case unhideItems
+  case deletePermanently
+  ```
+- Clipboard abstraction shared by Core and the AppKit runtime:
+  ```swift
+  public protocol PathClipboardWriting {
+      func writePaths(_ paths: [String]) throws
+  }
+  ```
+- File operations:
+  ```swift
+  func setHiddenBatch(_ urls: [URL], hidden: Bool) throws -> FileOperationBatchResult
+  func deleteBatch(_ urls: [URL]) throws -> FileOperationBatchResult
+  ```
+
+#### 3. Contracts
+
+- `copyPath` writes one path per line to `NSPasteboard.general`; with an empty selection it copies the target directory path.
+- Hide/unhide use `URLResourceValues.isHidden` and report partial failures through `FileOperationBatchResult`.
+- `deletePermanently` removes items with `FileManager.removeItem` and must never route through the Trash or Finder's normal delete.
+- The Finder extension must show an `NSAlert` before dispatching `.deletePermanently`; cancellation returns without calling XPC.
+- Operation history kinds map to `.copyPath`, `.hide`, `.unhide`, and `.delete`.
+
+#### 4. Validation & Error Matrix
+
+- Empty selection for hide/unhide/delete -> `FileOperationError.missingSelection`.
+- Partial batch failure -> success items in `completed`, failures and unprocessed items in `remainingSourceURLs`.
+- Clipboard write failure -> action failure with the localized clipboard error.
+
+#### 5. Good/Base/Bad Cases
+
+- Good: hide then unhide toggles `.isHidden` and logs both operation kinds.
+- Good: permanent delete removes the item without adding it to the Trash.
+- Bad: dispatching `.deletePermanently` directly to XPC without the Finder-side confirmation alert.
+- Bad: implementing permanent delete with `NSWorkspace.recycle` or Finder scripting.
+
+#### 6. Tests Required
+
+- Unit-test `copyPath` for selection and container contexts.
+- Unit-test hide/unhide toggling and permanent delete removal.
+- Regression-test that legacy `.runCommand` config entries decode away without breaking the rest of the config.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+```swift
+try fileManager.trashItem(at: url, resultingItemURL: nil)
+```
+
+Correct:
+```swift
+try fileManager.removeItem(at: url)
+```
+
+### Scenario: Finder Sync Cold-Start Menu Rendering
+
+#### 1. Scope / Trigger
+
+- Trigger: changes to `FinderSyncController.menu(for:)`, Finder Sync startup/bootstrap, `MenuIconDescriptor`, `MenuIconResolver`, menu icon rendering, or cache refresh behavior.
+- This is a Finder process boundary contract because Finder may cold-start the extension after install or long idle and can skip an extension's menu contribution if the callback takes too long.
+
+#### 2. Signatures
+
+- Finder menu callback:
+  ```swift
+  override func menu(for menuKind: FIMenuKind) -> NSMenu?
+  ```
+- Core icon cold-path contract:
+  ```swift
+  MenuIconDescriptor.requiresExternalResourceLookup: Bool
+  MenuIconDescriptor.lightweightFallback: MenuIconDescriptor
+  NSWorkspace.shared.icon(forFile:)
+  ```
+- Startup fallback:
+  ```swift
+  RightClickConfig()
+  DirectoryBookmarkCatalog()
+  ```
+
+#### 3. Contracts
+
+- Finder extension startup must install an in-memory fallback menu config before exposing the global Finder Sync scope.
+- Startup may start best-effort config/bookmark reads after a short delay, but they must run in the background; neither synchronous reads nor bootstrap writes should delay the first menu.
+- `menu(for:)` must build from cached config/bookmarks and return quickly; it must not perform storage bootstrap, shell commands, XPC calls, or file mutations.
+- Menu callbacks may synchronously render only already-cached real icons or SF Symbol placeholders; they must not call `NSWorkspace` icon APIs on cache misses.
+- App bundle and file path icons require external resource lookup. The menu callback must not synchronously call `NSWorkspace.urlForApplication(withBundleIdentifier:)` or `NSWorkspace.shared.icon(forFile:)` for cache misses, and must not start that work immediately from inside the callback.
+- Real app and file-path icons should be resolved on a low-priority background icon queue after a short no-menu idle window, rasterized into small menu-ready bitmap images, cached in memory by descriptor key, persisted as small PNGs under `icon-cache/v1`, and reused by later right-clicks.
+- Persisted icon cache reads must also be asynchronous. `menu(for:)` may consult only the in-memory icon cache and placeholder cache.
+- Do not cache raw `NSWorkspace` icon `NSImage` objects for menus; they may lazily decode or draw ICNS/PDF representations on the later menu open that first displays them.
+- New menu requests should cancel queued-but-not-running icon prewarm work so Finder is not competing with stale icon lookups.
+- App bundle icon cache misses must show the generic default app icon immediately.
+- File path icon cache misses may show an SF Symbol folder/file placeholder immediately.
+- Config/bookmark load failures should use `NSLog` diagnostics and keep the fallback menu available rather than returning `nil` solely because config did not load.
+- Periodic config refresh should be scheduled after the menu returns, not before menu construction. An explicit `configurationChangedNotificationName` bypasses the periodic delay; if another notification arrives during a read, force a fresh read before applying the result. Keep disk I/O outside menu construction.
+
+#### 4. Validation & Error Matrix
+
+- Missing `config.json` / `bookmarks.json` -> first menu uses fallback config; background bootstrap creates durable defaults.
+- Corrupt config/bookmark JSON -> log diagnostic, keep fallback menu; do not crash Finder.
+- First menu after extension startup -> return menu items with placeholder/default icons; schedule real app/file-path icon resolution only after the no-menu idle window.
+- Extension startup with existing persisted icon PNGs -> load them into memory asynchronously after config is available; do not synchronously scan or read the cache directory during startup or menu rendering.
+- Second menu opened during the idle window -> cancel queued icon prewarming and return quickly from cached/default/placeholders.
+- Second menu opened while an already-running icon resolution is still running -> return quickly from cached/default/placeholders; do not wait for the queue.
+- First menu that displays resolved icons -> should use pre-rasterized 16px bitmap images, not raw `NSWorkspace` images that defer rendering to Finder's menu draw.
+- App icon cache miss -> show the default app icon and enqueue LaunchServices lookup plus `NSWorkspace.shared.icon(forFile:)` only from the delayed background prewarm path.
+- Unknown app icon cache miss -> show the default app icon; the background resolver may cache the same generic icon to avoid repeated LaunchServices work.
+- File path icon cache miss -> show an SF Symbol folder/file placeholder where possible, then enqueue `NSWorkspace.shared.icon(forFile:)` from the delayed background prewarm path.
+- Empty presentation after filtering by invocation -> returning `nil` is allowed because there are genuinely no eligible actions.
+
+#### 5. Good/Base/Bad Cases
+
+- Good: first right-click after install shows built-in fallback actions with lightweight/default icons, even before background bootstrap finishes.
+- Good: first right-click after long idle uses in-memory config/fallback and never starts real app/file icon lookup during the callback.
+- Good: repeated right-clicks remain responsive while queued icon prewarming is canceled or real app/file icons are slowly resolved in the low-priority background queue; responsiveness wins over icon completeness.
+- Base: settings changes are picked up by background refresh within the existing cache refresh window.
+- Bad: startup or `menu(for:)` calls `ConfigurationBootstrapper.bootstrap`, `Data(contentsOf:)`, `NSWorkspace.urlForApplication`, `NSWorkspace.icon(forFile:)`, XPC, or shell commands synchronously on the cold path.
+- Bad: second right-click becomes the icon warm-up path and blocks while icons are being resolved.
+- Bad: a decode failure leaves `hasLoadedConfiguration == false` and causes the first menu request to return `nil`.
+
+#### 6. Tests Required
+
+- Unit-test `MenuIconDescriptor.requiresExternalResourceLookup` for app bundle and file path icons.
+- Unit-test `MenuIconDescriptor.lightweightFallback` for app bundle, directory-like path, and file path with extension.
+- Typecheck/build `FinderSyncController` after startup or rendering changes.
+- Run `scripts/package-macos.sh debug` after Finder extension changes so the packaged `.appex` and embedded XPC layout are validated.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+```swift
+case .appBundleIdentifier(let bundleIdentifier):
+    let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier)
+    image = appURL.map { NSWorkspace.shared.icon(forFile: $0.path) }
+```
+inside the first `menu(for:)` render for an uncached icon.
+
+Correct:
+```swift
+menuItem.image = cachedMenuImage(for: item.icon)
+scheduleIconPrewarming(for: presentation) // resolves real app/file icons asynchronously
+```
+
+Wrong:
+```swift
+loadConfigurationForStartup()
+```
+where the method synchronously reads `config.json` and `bookmarks.json` during `init()`.
+
+Correct:
+```swift
+applyFallbackConfiguration()
+installGlobalFinderSyncScope()
+loadConfigurationForStartupInBackground()
+```
+
+Wrong:
+```swift
+let result = try ConfigurationBootstrapper().bootstrap(paths: paths)
+applyCachedConfiguration(config: result.config, bookmarks: result.bookmarks)
+```
+as a required synchronous startup step before any menu can be returned.
+
+Correct:
+```swift
+applyCachedConfiguration(config: RightClickConfig(), bookmarks: DirectoryBookmarkCatalog())
+loadConfigurationForStartupInBackground()
+repairConfigurationInBackground(paths: paths)
+```
+
+### Scenario: Legacy Command Template Removal
+
+#### 1. Scope / Trigger
+
+- Trigger: changes to `ActionKind`, `MenuGroup`, `RightClickConfig` decoding, or `ConfigurationBootstrapper` migration.
+- This is a config-migration contract because existing installs still have `runCommand` actions, `commandTemplates` arrays, and VS Code/Cursor developer entrypoints on disk.
+
+#### 2. Signatures
+
+- Lenient action decoding skips unknown/removed action kinds instead of failing the whole config.
+- Bootstrap migration:
+  ```swift
+  removeLegacyDeveloperEntrypoints(from:actions:)
+  appendMissingFileOperationActions(to:)
+  ```
+
+#### 3. Contracts
+
+- `schemaVersion` is `3`; older values are upgraded on decode.
+- `commandTemplates` is no longer a config field; unknown JSON keys are ignored.
+- Legacy `.runCommand` actions are dropped during decode so they never reach menu building or XPC.
+- Built-in VS Code/Cursor entrypoints are removed only when they still match their default id, title, and bundle identifier; user-added replacements survive.
+
+#### 4. Validation & Error Matrix
+
+- Config with a single legacy `runCommand` action -> decode succeeds, action omitted, other actions preserved.
+- Missing file-operation defaults -> bootstrap appends `copy-path`, `hide-selection`, `unhide-selection`, and `delete-permanently`.
+
+#### 5. Good/Base/Bad Cases
+
+- Good: legacy config keeps user-added actions and gains the new file-operation defaults.
+- Bad: throwing `DecodingError` because one historical action kind disappeared.
+
+#### 6. Tests Required
+
+- Codable regression for legacy `runCommand` actions and `commandTemplates` JSON.
+- Bootstrap test that legacy VS Code entrypoints and actions are removed.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+```swift
+self.actions = try container.decode([RightClickAction].self, forKey: .actions)
+```
+
+Correct:
+```swift
+if let actions = try? container.decode([LenientAction].self, forKey: .actions) {
+    self.actions = actions.compactMap(\.action)
+}
+```
+
+### Scenario: Developer Entrypoint Dynamic Target
+
+#### 1. Scope / Trigger
+
+- Trigger: changes to `DeveloperTargetMode`, `FinderContext`, `.openInApp` handling, `ConfigurationBootstrapper`, developer entrypoint settings, or Finder menu invocation mapping.
+- This is a cross-layer contract because Finder Sync captures invocation shape, XPC transports `FinderContext`, Core resolves the target URL, and the settings app persists the chosen mode.
+
+#### 2. Signatures
+
+- Persisted target mode:
+  ```swift
+  public enum DeveloperTargetMode: String, Codable, Equatable {
+      case dynamic
+      case currentDirectory
+      case selectedItem
+      case selectedItemDirectory
+  }
+  ```
+- Finder request context:
+  ```swift
+  FinderContext(
+      invocation: .selection | .container | .toolbar,
+      targetDirectory: URL,
+      selectedItems: [URL]
+  )
+  ```
+- Runtime resolver:
+  ```swift
+  developerTargetURL(for entrypoint: DeveloperEntrypoint, context: FinderContext) -> URL
+  ```
+- App opener planner:
+  ```swift
+  DeveloperAppOpenPlanner.plan(for: entrypoint, targetURL: targetURL, appURL: appURL)
+  ```
+
+#### 3. Contracts
+
+- `.dynamic` is the default `DeveloperEntrypoint.targetMode` for new and built-in developer entries.
+- `.dynamic` target resolution:
+  - `.selection` with a selected item -> first selected item.
+  - `.container` -> `context.targetDirectory`, even if Finder reports stale selected items.
+  - `.toolbar` with a selected item -> first selected item; otherwise `context.targetDirectory`.
+- The Finder extension must keep passing the raw `FinderContext` through XPC; it must not resolve developer target URLs itself.
+- `ActionRunner` owns target resolution so validation and operation logging use the same final URL.
+- `ConfigurationBootstrapper` may repair built-in Terminal / VS Code / Cursor entries from old `.currentDirectory` defaults to `.dynamic` only when ID, title, and bundle identifier still match the built-in entry.
+- Workspace-oriented developer apps should prefer a source-backed CLI opener when available, for example Codex `codex app <workspace>` or VS Code-family `code <workspace>`.
+- CLI opener candidates must be existence-checked with `FileManager.isExecutableFile` before invocation; missing candidates fall back to `NSWorkspace.open`.
+- When the resolved dynamic target is a file and the selected app is opened through a workspace CLI, pass the file's parent directory as the workspace.
+- Terminal-like apps such as Apple Terminal, iTerm, Warp, Alacritty, and Kitty are directory targets even when opened through `NSWorkspace.open`; if the resolved dynamic target is a file, pass the file's parent directory to the app opener.
+- Unknown apps must keep the previous `NSWorkspace.open([targetURL], withApplicationAt:)` behavior.
+
+#### 4. Validation & Error Matrix
+
+- Dynamic mode with no selected items -> fall back to `targetDirectory`.
+- Dynamic container invocation with non-empty `selectedItems` -> use `targetDirectory`.
+- Resolved target outside authorized monitored/common directories -> existing `AuthorizedPathValidator` failure.
+- Existing user-customized developer entrypoint -> do not force target mode migration unless it still matches a built-in entry exactly.
+- Recognized developer app with missing bundled/global CLI -> fall back to `NSWorkspace.open` instead of failing.
+- Terminal-like app with selected file target -> plan `.application(appURL:targetURL:)` with the selected file's parent directory, not the file URL.
+- CLI `Process.run()` failure -> return `AppOpeningError.cannotOpen(executableURL.path)`.
+- Unknown future enum raw value in stored JSON -> config decode fails until a migration is added; add Codable compatibility tests if introducing such migration.
+
+#### 5. Good/Base/Bad Cases
+
+- Good: selecting `~/Code/App` and choosing "在 Cursor 打开" opens Cursor with `~/Code/App`.
+- Good: right-clicking blank space in `~/Code` and choosing the same entry opens Cursor with `~/Code`.
+- Good: Finder toolbar action opens the selected item when Finder has an active selection, otherwise the current directory.
+- Good: selecting `~/Code/App` and choosing "在 Codex 打开" invokes the app-bundled Codex CLI with `app ~/Code/App`.
+- Good: selecting `~/Code/App/README.md` and choosing a workspace CLI app opens `~/Code/App` as the workspace.
+- Good: selecting `~/Downloads/report.pdf` and choosing "在 Terminal 打开" opens Terminal at `~/Downloads`.
+- Base: existing custom entry with `.selectedItemDirectory` keeps that explicit behavior.
+- Base: a recognized app whose CLI helper is absent still opens through macOS Launch Services.
+- Bad: Finder Sync rewrites `.container` requests into selected-item paths before sending XPC.
+- Bad: changing `.currentDirectory` semantics to mean dynamic, breaking explicit old configurations.
+- Bad: invoking a hard-coded CLI path without checking that it exists and is executable.
+- Bad: passing a selected PDF/image/file URL directly to Terminal, then recording success while Terminal does not open at the containing folder.
+
+#### 6. Tests Required
+
+- Unit-test `ActionRunner` dynamic target resolution for selection, container, no-selection fallback, and toolbar fallback.
+- Unit-test bootstrap repair for built-in developer entries previously saved with `.currentDirectory`.
+- Unit-test `DeveloperAppOpenPlanner` for Codex, VS Code-family, JetBrains, documented editor CLIs, Terminal file-to-parent directory conversion, file-to-parent workspace conversion, and unknown-app fallback.
+- Run:
+  ```bash
+  git diff --check
+  swift test --filter ActionRunnerTests
+  swift test --filter ConfigurationBootstrapperTests
+  swift test --filter AppOpeningTests
+  scripts/package-macos.sh debug
+  scripts/ci-swift-check.sh debug
+  ```
+- If SwiftPM manifest loading is broken locally, run an equivalent direct `swiftc`/built-module smoke for dynamic resolution and record the SwiftPM failure separately.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+```swift
+case .currentDirectory:
+    return context.selectedItems.first ?? context.targetDirectory
+```
+
+Correct:
+```swift
+case .dynamic:
+    switch context.invocation {
+    case .selection, .toolbar:
+        return context.selectedItems.first ?? context.targetDirectory
+    case .container:
+        return context.targetDirectory
+    }
+case .currentDirectory:
+    return context.targetDirectory
+```
+
+Wrong:
+```swift
+return .application(appURL: terminalURL, targetURL: selectedFileURL)
+```
+
+Correct:
+```swift
+return .application(appURL: terminalURL, targetURL: selectedFileURL.deletingLastPathComponent())
+```
+
+### Scenario: macOS GitHub Actions Packaging
+
+#### 1. Scope / Trigger
+
+- Trigger: any change to `.github/workflows/package-macos.yml`, `scripts/ci-swift-check.sh`, `scripts/package-macos.sh`, `Package.swift`, or macOS packaging targets.
+- This is an infrastructure contract because packaging depends on GitHub runner labels, Swift/Xcode toolchains, artifact actions, and optional signing/export environment variables.
+
+#### 2. Signatures
+
+- CI check command:
+  ```bash
+  scripts/ci-swift-check.sh <release|debug>
+  ```
+- Packaging command:
+  ```bash
+  scripts/package-macos.sh <release|debug>
+  RIGHTCLICKPRO_PACKAGE_DMG=1 scripts/package-macos.sh <release|debug>
+  RIGHTCLICKPRO_REGISTER_FINDER_EXTENSION=1 scripts/package-macos.sh debug
+  ```
+- Finder extension bootstrap before monitored-directory registration:
+  ```swift
+  _ = try ConfigurationBootstrapper().bootstrap(paths: paths)
+  FIFinderSyncController.default().directoryURLs = Set(FinderSyncScope.syncRoots())
+  ```
+- Opt-in local preview PlugInKit registration order:
+  ```bash
+  RIGHTCLICKPRO_REGISTER_FINDER_EXTENSION=1 scripts/package-macos.sh debug
+  pluginkit -a "$appex_path"
+  pluginkit -e use -i "$FINDER_EXTENSION_BUNDLE_IDENTIFIER"
+  ```
+- Runtime Finder menu repair path:
+  ```swift
+  RightClickActionRunnerXPCClient().performMaintenance(
+      SystemMaintenanceRequest(
+          task: .repairFinderContextMenu,
+          finderExtensionPath: bundledAppexPath
+      )
+  )
+  ```
+- Optional Xcode archive inputs:
+  ```text
+  RIGHTCLICKPRO_XCODE_PROJECT=<path-to-xcodeproj>
+  RIGHTCLICKPRO_XCODE_SCHEME=<scheme-name>
+  RIGHTCLICKPRO_EXPORT_OPTIONS_PLIST=<optional-export-options-plist>
+  ```
+- Preview bundle identifiers and entitlements:
+  ```text
+  APP_NAME=RightClick
+  BUNDLE_IDENTIFIER=com.local.rightclick
+  XPC_BUNDLE_IDENTIFIER=com.local.rightclick.ActionRunner
+  FINDER_EXTENSION_BUNDLE_IDENTIFIER=com.local.rightclick.FinderExtension
+  CODE_SIGN_IDENTITY=-
+  ```
+- Workflow DMG artifact contract:
+  ```yaml
+  RIGHTCLICKPRO_PACKAGE_DMG: "1"
+  path: dist/*.dmg
+  ```
+- Preview app and Finder extension entitlements include app sandbox, user-selected read/write, app-scope bookmarks, and a narrow home-relative read/write exception for `/Library/Application Support/com.local.rightclick/`.
+- Preview app entitlements must include `com.apple.security.network.client` so the settings Overview can reach GitHub's latest-release API from the sandboxed app. Do not grant this network entitlement to the Finder extension unless a concrete Finder-side network feature is added.
+- Preview ActionRunner XPC entitlements intentionally omit app sandbox for local smoke tests against user-selected paths and Application Support state. Runtime authorization must still validate all file mutations through `ActionRunner`.
+
+#### 3. Contracts
+
+- GitHub workflow must use explicit macOS runner labels, not `macos-latest`, to avoid packaging drift when GitHub changes aliases.
+- The default packaging path is SwiftPM preview bundling while no complete Xcode project exists.
+- The SwiftPM preview app bundle's user-facing name is `RightClick.app`; Swift target/module/type names must use the `RightClick*` naming family.
+- The SwiftPM preview bundle must still include `Contents/PlugIns/RightClickFinderExtension.appex`.
+- The preview bundle must place `RightClickActionRunner.xpc` in `Contents/XPCServices/` and also inside `RightClickFinderExtension.appex/Contents/XPCServices/` so `NSXPCConnection(serviceName:)` can resolve the service from the main app and the Finder extension process.
+- The preview Finder Sync `.appex` must be a Mach-O `EXECUTE` binary linked with `_NSExtensionMain`; a Swift dylib inside an `.appex` is not a valid Finder Sync extension bundle for PlugInKit discovery.
+- The preview `.appex` Info.plist must contain `NSExtensionPointIdentifier=com.apple.FinderSync`.
+- Finder Sync extension startup must not assume the menu-bar app launched first. It should install an in-memory fallback config, expose the global Finder Sync scope quickly, then load/repair durable config in the background.
+- Finder Sync must register `/` as the global sync root so menus remain available outside shortcut directories. Exact roots such as `~/Code` can make Finder sidebar favorites render with the extension app icon.
+- Finder Sync extension cold-start must keep `menu(for:)` fast. It should serve menus from cached config/bookmark snapshots, cache rendered icons, return default/lightweight icons on cache misses, and resolve real app/file-path icons asynchronously.
+- Default injected Desktop/Downloads/Documents/Code bookmarks must use the real user home directory, not the sandbox container home returned by `FileManager.homeDirectoryForCurrentUser` inside sandboxed app/extension processes.
+- Bootstrap must self-heal existing bookmark paths under the sandbox process home by remapping them to the real user home while preserving bookmark IDs, display names, bookmark data, and timestamps.
+- Bootstrap must also repair older existing configs that are missing an available default directory. Append the missing default bookmark, monitored/common directory IDs, and generated directory actions while preserving unrelated custom actions, templates, developer entries, and user ordering as much as possible.
+- Finder Sync menu leaf items must not rely on `representedObject` for action payloads after Finder copies menu items. Use a stable `tag` or another Finder-preserved primitive to map selected menu items back to pending actions.
+- The ActionRunner must resolve directory bookmarks and hold security-scoped access during request execution before creating the authorized-path validator.
+- The preview app, XPC service, Finder extension, and the shared `Contents/Frameworks/libRightClickCore.dylib` must be signed before zipping. Ad-hoc signing is acceptable for local test artifacts; public distribution still requires Developer ID signing and notarization.
+- The packaging script must validate the preview bundle before upload so CI cannot publish an artifact that lacks a discoverable Finder Sync extension.
+- The packaging script must not register the staging `.appex` with PlugInKit by default. Build artifacts often live under source directories such as `~/Code`, and registering those paths can make Finder display the app icon against source-directory sidebar items.
+- For local preview Finder Sync smoke tests only, `RIGHTCLICKPRO_REGISTER_FINDER_EXTENSION=1` may explicitly register the just-built `.appex` path with `pluginkit -a` before applying `pluginkit -e use`; enabling by identifier alone only affects already-discovered extension records and may miss reinstalls.
+- After a DMG install, the settings app must not assume build-time PlugInKit registration exists on the user's machine. On launch it should ask the embedded ActionRunner XPC service to register the bundled `.appex`, request enablement, and reload Finder once for the current packaged extension signature.
+- The packaged extension setup signature must include filesystem resource identity for the physical `.appex`, `Info.plist`, extension executable, and host app bundle. Path, version, and modification time alone are not enough because same-version reinstall/overwrite can keep those values unchanged while Finder/PlugInKit still needs a fresh preload.
+- Finder restart/repair controls should also run through the ActionRunner XPC maintenance path because the menu-bar app is sandboxed; direct `killall Finder` or `pluginkit` from the app can fail.
+- When both `RIGHTCLICKPRO_XCODE_PROJECT` and `RIGHTCLICKPRO_XCODE_SCHEME` are configured, packaging must use `xcodebuild archive`.
+- If only one Xcode variable is configured, packaging must fail instead of silently falling back to SwiftPM preview output.
+- Local zip artifacts are written to `dist/RightClick-<version>-<arch>-preview.zip` when the packaging script runs directly.
+- GitHub Actions must set `RIGHTCLICKPRO_PACKAGE_DMG=1` and upload only the compressed read-only `UDZO` artifact at `dist/RightClick-<version>-<arch>-preview.dmg`.
+- Version-tag GitHub Releases must publish DMG assets built by the GitHub Actions packaging workflow. Local DMGs are acceptable for smoke tests and diagnostics, but they are not the preferred public release artifact source.
+- `package_dmg` must not be a workflow_dispatch input because CI always publishes DMG-only artifacts.
+- DMG contents must include `RightClick.app`, an `/Applications` alias, and `README.txt`.
+- `README.txt` must cover drag-to-Applications installation, `xattr -cr "/Applications/RightClick.app"` quarantine cleanup, the non-Developer-ID/non-notarized warning, Finder Extension enablement, and the `killall Finder` fallback.
+- `RIGHTCLICKPRO_PACKAGE_DMG=1` is supported only on the SwiftPM preview bundle path until the Xcode archive/export path has a concrete `.app` output contract.
+- The current default artifacts are non-notarized test builds. Developer ID signing/notarization requires a separate secrets/keychain flow.
+
+#### 4. Validation & Error Matrix
+
+- Unsupported configuration argument -> exit 64.
+- Unsupported `RIGHTCLICKPRO_PACKAGE_DMG` value -> exit 64.
+- Unsupported `RIGHTCLICKPRO_REGISTER_FINDER_EXTENSION` value -> exit 64.
+- Only one of `RIGHTCLICKPRO_XCODE_PROJECT` / `RIGHTCLICKPRO_XCODE_SCHEME` is set -> exit 64.
+- `RIGHTCLICKPRO_PACKAGE_DMG=1` with a configured Xcode archive path -> exit 64 before archive.
+- `RIGHTCLICKPRO_XCODE_PROJECT` path is missing -> exit 66.
+- No Xcode variables are set -> build SwiftPM preview bundle.
+- `RIGHTCLICKPRO_PACKAGE_DMG=1` and `hdiutil` is unavailable -> exit 69.
+- Preview Finder Sync binary is not `EXECUTE` -> exit 65.
+- Preview Finder Sync extension point is not `com.apple.FinderSync` -> exit 65.
+- Finder extension starts before config/bookmark files exist -> bootstrap creates defaults before assigning `directoryURLs`.
+- Finder extension starts after a long idle period -> first `menu(for:)` must not synchronously run full bootstrap or repeated JSON/icon lookup work.
+- Finder sidebar favorite for a configured directory such as `~/Code` shows the RightClick app icon -> bug; do not register the exact favorite path as the Finder Sync root.
+- Finder right-click outside configured shortcut directories -> still return eligible menu items when action visibility matches the invocation.
+- Existing bookmark path starts with the sandbox process home -> remap to the same relative path under the real user home.
+- Existing bookmark path merely shares a similar prefix with the sandbox process home -> leave unchanged.
+- Existing config/bookmark files omit an available default directory such as `~/Code` -> append that directory to bookmarks, `monitoredDirectoryIDs`, `commonDirectoryIDs`, and missing generated directory actions.
+- Preview bundle is missing app or extension-local `RightClickActionRunner.xpc` -> packaging fails before artifact upload.
+- Preview XPC service has app sandbox entitlement -> local smoke tests against auto-injected protected folders may fail.
+- Preview app lacks `com.apple.security.network.client` -> update checks fail in-app even though terminal `curl` succeeds; packaging validation must fail.
+- Preview deep code-sign verification fails -> packaging fails before artifact upload.
+- `pluginkit` unavailable during `RIGHTCLICKPRO_REGISTER_FINDER_EXTENSION=1` -> skip registration/enablement without failing packaging.
+- `pluginkit -a` or `pluginkit -e use` fails during opt-in local preview enablement -> do not fail packaging; the bundle validation remains the hard gate.
+- Runtime maintenance cannot find bundled `RightClickFinderExtension.appex` -> show a user-facing error that the app should be installed from the DMG into Applications.
+- Runtime maintenance XPC is unavailable -> show a user-facing error and keep the manual System Settings fallback available.
+- Direct sandboxed app `killall Finder` fails -> bug; restart should be delegated to the unsandboxed ActionRunner XPC maintenance service.
+- Overview setup banner is visible after successful runtime setup -> UI noise; hide it until automatic setup fails or manual attention is needed.
+- No `dist/*.dmg` output in GitHub Actions -> artifact upload must fail.
+- Workflow upload path includes `dist/*.zip` -> bug; CI artifact regresses to mixed zip/DMG contents.
+- GitHub Release assets are uploaded from a local developer machine while the tag workflow can build them -> release process bug; prefer the Actions-built DMGs.
+- Docs mention `package_dmg=false` for GitHub Actions -> bug; docs describe an unsupported CI path.
+- Docs or generated entitlements imply the Finder extension needs GitHub network access for update checks -> bug; the update check runs in the settings app.
+- DMG smoke mount lacks `RightClick.app`, `Applications`, or `README.txt` -> exit 65.
+
+#### 5. Good/Base/Bad Cases
+
+- Good: tag `v1.2.3` uploads `RightClick-1.2.3-<arch>-preview.dmg` containing `RightClickFinderExtension.appex` as an `_NSExtensionMain` executable inside the app bundle.
+- Good: `RIGHTCLICKPRO_PACKAGE_DMG=1 scripts/package-macos.sh debug` produces zip plus `RightClick-<version>-<arch>-preview.dmg`, then mounts the DMG and verifies the app, Applications alias, and README.
+- Good: Finder starts the extension before the app has opened; the extension installs fallback config, assigns `/` and mounted volume roots as the sync roots, and repairs config/bookmarks asynchronously.
+- Good: `~/Code` is configured as a shortcut directory; Finder Sync still registers `/` and mounted volume roots as the sync roots and returns eligible menus globally.
+- Good: an external volume is mounted at `/Volumes/DataDisk`; the extension observes that volume root and shows the context menu inside it. Unmounting or renaming the volume re-registers the remaining roots.
+- Good: after Finder has unloaded the extension, the next right-click cold-start sets fallback config immediately, returns menu items from cached config once loaded, and refreshes repaired config asynchronously.
+- Good: an older install has Desktop/Downloads/Documents only and `~/Code` exists; bootstrap appends the `code` bookmark, monitors it, and adds `open-directory-code`, `move-to-code`, and `copy-to-code`.
+- Good: normal local packaging validates `RightClickFinderExtension.appex` but does not register the `dist/staging` or `tmp` path into the user's PlugInKit database.
+- Good: opt-in `RIGHTCLICKPRO_REGISTER_FINDER_EXTENSION=1` local smoke packaging registers the new `RightClickFinderExtension.appex` path, then enables `com.local.rightclick.FinderExtension`.
+- Good: first app launch after dragging from the DMG registers `Contents/PlugIns/RightClickFinderExtension.appex` through ActionRunner XPC and reloads Finder once, so PlugInKit can discover the right physical extension path on that machine without a slow first right-click wait.
+- Good: reinstalling the same app version at the same `/Applications` path changes the packaged extension resource identity and triggers one fresh Finder preload instead of reusing the previous setup marker.
+- Good: clicking "重启 Finder" asks ActionRunner XPC to register/enable the extension and then restart Finder; if `killall Finder` fails, the service tries an AppleScript fallback and reports diagnostics.
+- Base: manual workflow dispatch with no Xcode env vars produces a SwiftPM preview bundle with App, app-local XPC service, extension-local XPC service, Finder extension, and shared core dylib.
+- Base: manual workflow dispatch always requests DMG generation and uploads only `dist/*.dmg`.
+- Base: pushing tag `v0.1.1` runs the macOS matrix, downloads the matrix DMGs in a release job, and creates or updates the GitHub Release with those DMGs.
+- Bad: bootstrap writes `~/Library/Containers/com.local.rightclick/Data/Desktop` as a monitored directory, so the Finder menu never appears on the user's real Desktop.
+- Bad: `FIFinderSyncController.default().directoryURLs = Set([URL(fileURLWithPath: "/Users/me/Code")])` for a visible sidebar favorite, causing Finder to render the folder with the extension app icon.
+- Bad: `FinderSyncController.menu(for:)` reads `config.json`, reads `bookmarks.json`, resolves all app icons, and runs bootstrap synchronously on every right-click.
+- Bad: every normal `scripts/package-macos.sh` run registers `dist/staging/.../RightClickFinderExtension.appex`, causing Finder/PlugInKit state to point at source-tree build artifacts and display RightClick icons beside directories such as `~/Code`.
+- Bad: the packaging script only runs `pluginkit -e use -i com.local.rightclick.FinderExtension`; after reinstall, PlugInKit may still know only an old or missing physical extension path.
+- Bad: the sandboxed menu-bar app directly runs `/usr/bin/killall Finder`, then reports failure even though the embedded unsandboxed XPC service could perform the repair.
+- Bad: every normal launch restarts Finder even when the same bundled extension was already repaired successfully.
+- Bad: workflow upload glob includes both `.zip` and `.dmg`, so one Actions artifact contains multiple package formats.
+- Bad: developer uploads `dist/RightClick-0.1.1-arm64-preview.dmg` from a local machine as the primary GitHub Release asset when Actions can build the tag.
+- Bad: `RIGHTCLICKPRO_XCODE_PROJECT` set without `RIGHTCLICKPRO_XCODE_SCHEME` silently falls back to preview bundling.
+- Bad: preview bundle contains `Contents/PlugIns/RightClickFinderExtension.appex` but the appex executable is a `DYLIB`.
+
+#### 6. Tests Required
+
+- Run shell syntax checks:
+  ```bash
+  bash -n scripts/ci-swift-check.sh scripts/package-macos.sh
+  ```
+- Run bootstrap regression tests:
+  ```bash
+  swift test --filter ConfigurationBootstrapperTests
+  ```
+- Parse the workflow YAML:
+  ```bash
+  ruby -e 'require "yaml"; YAML.load_file(".github/workflows/package-macos.yml")'
+  ```
+- Run preview package validation:
+  ```bash
+  scripts/package-macos.sh debug
+  RIGHTCLICKPRO_PACKAGE_DMG=1 scripts/package-macos.sh debug
+  codesign --verify --deep --strict --verbose=2 "dist/staging/RightClick.app"
+  codesign -d --entitlements :- "dist/staging/RightClick.app"
+  otool -hv "dist/staging/RightClick.app/Contents/PlugIns/RightClickFinderExtension.appex/Contents/MacOS/RightClickFinderExtension"
+  test -x "dist/staging/RightClick.app/Contents/XPCServices/RightClickActionRunner.xpc/Contents/MacOS/RightClickActionRunner"
+  test -x "dist/staging/RightClick.app/Contents/PlugIns/RightClickFinderExtension.appex/Contents/XPCServices/RightClickActionRunner.xpc/Contents/MacOS/RightClickActionRunner"
+  codesign -d --entitlements :- "dist/staging/RightClick.app/Contents/PlugIns/RightClickFinderExtension.appex/Contents/XPCServices/RightClickActionRunner.xpc"
+  hdiutil imageinfo "dist/RightClick-<version>-<arch>-preview.dmg"
+  ```
+- Run Swift type checks or `swift test` where the local toolchain allows it.
+- For future Xcode project work, run at least one GitHub Actions workflow dispatch before calling packaging complete.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+```yaml
+runs-on: macos-latest
+```
+
+Correct:
+```yaml
+runs-on: macos-15
+```
+
+Wrong:
+```yaml
+path: |
+  dist/*.zip
+  dist/*.dmg
+```
+
+Correct:
+```yaml
+RIGHTCLICKPRO_PACKAGE_DMG: "1"
+path: dist/*.dmg
+```
+
+Wrong:
+```bash
+RIGHTCLICKPRO_XCODE_PROJECT=RightClick.xcodeproj scripts/package-macos.sh release
+```
+
+Correct:
+```bash
+RIGHTCLICKPRO_XCODE_PROJECT=RightClick.xcodeproj \
+RIGHTCLICKPRO_XCODE_SCHEME=RightClick \
+scripts/package-macos.sh release
+```
+
+Wrong:
+```bash
+RIGHTCLICKPRO_PACKAGE_DMG=true scripts/package-macos.sh debug
+```
+
+Correct:
+```bash
+RIGHTCLICKPRO_PACKAGE_DMG=1 scripts/package-macos.sh debug
+```
+
+Wrong:
+```text
+RightClickFinderExtension.appex/Contents/MacOS/RightClickFinderExtension: Mach-O ... dynamically linked shared library
+```
+
+Correct:
+```text
+RightClickFinderExtension.appex/Contents/MacOS/RightClickFinderExtension: Mach-O ... executable
+```
+
+Wrong:
+```swift
+let home = fileManager.homeDirectoryForCurrentUser
+```
+when building default monitored-directory bookmarks from a sandboxed app or extension process.
+
+Correct:
+```swift
+let home = realUserHomeDirectory
+```
+where the real home bypasses sandbox container redirection and existing container paths are sanitized on bootstrap.
+
+Wrong:
+```bash
+scripts/package-macos.sh debug
+pluginkit -a "$PWD/dist/staging/RightClick.app/Contents/PlugIns/RightClickFinderExtension.appex"
+```
+as the default packaging behavior, because it persists build-artifact paths in the user's PlugInKit database.
+
+Correct:
+```bash
+scripts/package-macos.sh debug
+```
+for normal packaging, with installed-app runtime repair handling `/Applications/RightClick.app`.
+
+Wrong:
+```bash
+pluginkit -e use -i "$FINDER_EXTENSION_BUNDLE_IDENTIFIER"
+```
+as the only opt-in local smoke registration step.
+
+Correct:
+```bash
+RIGHTCLICKPRO_REGISTER_FINDER_EXTENSION=1 scripts/package-macos.sh debug
+pluginkit -a "$appex_path"
+pluginkit -e use -i "$FINDER_EXTENSION_BUNDLE_IDENTIFIER"
+```
+so the physical `.appex` path is registered before enablement when explicitly requested.
+
+Wrong:
+```swift
+menuItem.representedObject = PendingMenuAction(actionID: item.actionID, context: context)
+```
+
+Correct:
+```swift
+menuItem.tag = tag
+pendingMenuActions[tag] = PendingMenuAction(actionID: item.actionID, context: context)
+```
+
+Wrong:
+```xml
+<key>com.apple.security.app-sandbox</key>
+<true/>
+```
+inside the preview ActionRunner XPC entitlement file.
+
+Correct:
+```xml
+<dict>
+</dict>
+```
+for the preview ActionRunner XPC entitlement file, with path authorization enforced in `ActionRunner`.
+
+### Scenario: Finder Menu Icon Presentation
+
+#### 1. Scope / Trigger
+
+- Trigger: changes to `Sources/RightClickCore/MenuBuilder.swift`, `Sources/RightClickFinderExtension/FinderSyncController.swift`, `DeveloperEntrypoint`, `FileTemplate`, directory actions, or Finder menu presentation.
+- This is a cross-layer contract because Core decides icon semantics while the Finder extension renders them as AppKit `NSImage` values.
+
+#### 2. Signatures
+
+- Menu presentation carries a semantic icon descriptor:
+  ```swift
+  public enum MenuIconDescriptor: Equatable {
+      case systemSymbol(String)
+      case appBundleIdentifier(String)
+      case filePath(String)
+      case fileExtension(String)
+      case folder
+  }
+  ```
+- Action-to-icon mapping lives in Core:
+  ```swift
+  public enum MenuIconResolver {
+      public static func icon(
+          for action: RightClickAction,
+          config: RightClickConfig,
+          bookmarks: DirectoryBookmarkCatalog = DirectoryBookmarkCatalog()
+      ) -> MenuIconDescriptor
+  }
+  ```
+- `MenuBuilder.buildMenu` must accept bookmarks so directory actions can resolve path icons:
+  ```swift
+  buildMenu(config: RightClickConfig, context: FinderContext, bookmarks: DirectoryBookmarkCatalog)
+  ```
+
+#### 3. Contracts
+
+- `.openInApp` actions must use `.appBundleIdentifier(entrypoint.bundleIdentifier)` when the entrypoint exists.
+- `.createFile` actions must use `.fileExtension(template.defaultFileName.pathExtension)` when the template has an extension.
+- Directory actions must use `.filePath(bookmark.path)` when the bookmark exists, otherwise `.folder`.
+- Finder extension must render descriptors with `NSWorkspace.shared.icon(for:)`, `NSWorkspace.shared.icon(forFile:)`, or `NSImage(systemSymbolName:)`.
+- Core must not import AppKit; it only emits semantic descriptors.
+- Finder extension menus must not wrap submenu groups in a visible branded container such as `"RightClick"`; root actions and functional group submenus should be added directly to the returned `NSMenu`.
+- When both root actions and functional group submenus exist, do not insert a Finder Sync separator between those two blocks; Finder can render that separator as abnormal whitespace. Add root actions and functional group rows directly and compactly. When no actions are visible, return `nil` instead of an empty menu.
+- Visible group names must describe the function, such as `"前往常用目录"`, `"新建文件"`, `"开发者工具"`, or `"文件操作"`, and settings previews should use matching labels.
+- Any enabled action with `placement == .rootMenu` must remain in `MenuPresentation.rootItems`, even when other actions from the same `MenuGroup` are shown in functional group submenus. Presentation fixes must not silently rewrite user placement choices.
+
+#### 4. Validation & Error Matrix
+
+- Missing developer entrypoint -> fallback to `.systemSymbol("app")`.
+- Missing template -> fallback to `.systemSymbol("doc.badge.plus")`.
+- Missing bookmark -> fallback to `.folder`.
+- Unknown file extension -> render the system `.data` type icon.
+- Missing installed app for bundle identifier -> render the generic application icon.
+- Finder menu contains a visible `"RightClick"` submenu container -> presentation bug; show functional group submenus directly.
+- No visible actions for the current Finder invocation -> return `nil` so Finder does not show an empty extension menu.
+- Settings placement copy says `"RightClick 子菜单"` -> copy drift; use `"功能分组菜单"` or another non-branded functional label.
+- A visible root item and submenu items from the same `MenuGroup` coexist -> keep the root item in `rootItems`, keep submenu items in `groupedSubmenuItems`, and render the root/group rows compactly without a separator-caused gap.
+
+#### 5. Good/Base/Bad Cases
+
+- Good: Cursor action shows Cursor's installed app icon in the Finder menu.
+- Good: `Note.md` template shows the system Markdown/document type icon.
+- Good: Finder context menu shows `"新建文件"` and `"开发者工具"` group submenus directly, without an intermediate `"RightClick"` submenu.
+- Good: `"新建Markdown"` can stay as a root item while other create-file actions remain under `"新建文件"`; the root section and functional groups are rendered next to each other without abnormal whitespace.
+- Base: a custom shell command shows a terminal symbol.
+- Bad: Finder menu item hard-codes `"terminal"` for every `.openInApp` action.
+- Bad: Finder extension rebuilds icon semantics independently from `MenuIconResolver`.
+- Bad: Finder menu shows a top-level `"RightClick"` submenu that only contains functional groups.
+- Bad: a display-layer workaround moves a user-selected root item into a submenu group.
+
+#### 6. Tests Required
+
+- Unit-test `MenuBuilder` icon descriptors for developer, template, and directory actions.
+- Unit-test root/submenu coexistence with one root create-file action and one submenu create-file action from the same group.
+- Run:
+  ```bash
+  git diff --check
+  scripts/package-macos.sh debug
+  scripts/ci-swift-check.sh debug
+  ```
+- Manually smoke-test the installed Finder menu when local packaging succeeds.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+```swift
+MenuItemPresentation(id: action.id, title: action.title, actionID: action.id, group: action.group, order: action.order)
+```
+
+Correct:
+```swift
+MenuItemPresentation(
+    id: action.id,
+    title: action.title,
+    actionID: action.id,
+    group: action.group,
+    order: action.order,
+    icon: MenuIconResolver.icon(for: action, config: config, bookmarks: bookmarks)
+)
+```
+
+Wrong:
+```swift
+let rightClickProMenu = NSMenu(title: "RightClick")
+let container = NSMenuItem(title: "RightClick", action: nil, keyEquivalent: "")
+container.submenu = rightClickProMenu
+menu.addItem(container)
+```
+
+Correct:
+```swift
+for group in MenuGroup.allCases {
+    let groupItem = NSMenuItem(title: title(for: group), action: nil, keyEquivalent: "")
+    groupItem.submenu = submenu
+    menu.addItem(groupItem)
+}
+return menu.items.isEmpty ? nil : menu
+```
