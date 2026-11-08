@@ -164,7 +164,7 @@ public final class ActionRunner {
             guard let record = try cutClipboard.load(), !record.sourceURLs.isEmpty else {
                 throw ActionRunnerError.emptyClipboard
             }
-            let batch = try fileService.moveBatch(record.sourceURLs, to: request.context.targetDirectory)
+            let batch = try fileService.moveBatch(record.sourceURLs, to: pasteDestination(for: request.context))
             var result = actionResult(
                 requestID: request.id,
                 batch: batch,
@@ -283,6 +283,24 @@ public final class ActionRunner {
         case .selectedItemDirectory:
             return context.selectedItems.first?.deletingLastPathComponent() ?? context.targetDirectory
         }
+    }
+
+    /// 选中单个文件夹时把粘贴目标直接定为该文件夹，否则回到当前目录。
+    private func pasteDestination(for context: FinderContext) -> URL {
+        guard context.invocation == .selection,
+              context.selectedItems.count == 1,
+              let item = context.selectedItems.first
+        else {
+            return context.targetDirectory
+        }
+
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: item.path, isDirectory: &isDirectory),
+              isDirectory.boolValue else {
+            return context.targetDirectory
+        }
+
+        return item
     }
 
     private func log(action: RightClickAction, request: ActionRequest, result: ActionResult) throws {

@@ -152,6 +152,7 @@ public struct ConfigurationBootstrapper {
         appendMissing(directoryIDs, to: &repaired.shortcutDirectoryIDs)
         appendMissingDirectoryActions(for: directoryIDs, bookmarks: bookmarks, to: &repaired.actions)
         appendMissingFileOperationActions(to: &repaired.actions)
+        enablePasteOnSelection(in: &repaired.actions)
         migrateDefaultTemplateNames(in: &repaired.fileTemplates)
         removeLegacyDefaultFileTemplates(from: &repaired.fileTemplates, actions: &repaired.actions)
         removeLegacyDeveloperEntrypoints(from: &repaired.developerEntrypoints, actions: &repaired.actions)
@@ -164,6 +165,13 @@ public struct ConfigurationBootstrapper {
         )
 
         return repaired
+    }
+
+    /// 粘贴动作原本只在目录空白处出现，现补充支持选中文件夹时直接粘贴到该文件夹。
+    private func enablePasteOnSelection(in actions: inout [RightClickAction]) {
+        for index in actions.indices where actions[index].kind == .paste {
+            actions[index].visibility.insert(.selection)
+        }
     }
 
     /// 旧版的“开发者工具”自定义分组迁移为内置默认分组。
