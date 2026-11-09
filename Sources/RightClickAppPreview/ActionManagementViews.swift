@@ -83,7 +83,10 @@ struct ActionListView: View {
     @State private var showsGroupSeparators = true
 
     private var sortedActions: [RightClickAction] {
-        viewModel.config.actions.sorted(by: { $0.order < $1.order })
+        // 管理页只展示已启用的菜单项；未启用的去各自的管理页（文件操作/常用目录/应用快捷入口/新建文件）打开。
+        viewModel.config.actions
+            .filter { $0.isEnabled }
+            .sorted(by: { $0.order < $1.order })
     }
 
     private var actionCounts: [ActionManagementFilter: Int] {
@@ -626,11 +629,9 @@ struct ActionTableHeader: View {
         HStack(spacing: 12) {
             Text("排序").frame(width: 58, alignment: .center)
             Text("菜单项").frame(maxWidth: .infinity, alignment: .leading)
-            Text("状态").frame(width: 56, alignment: .center)
             Text("适用范围").frame(width: 130, alignment: .leading)
             Text("菜单层级").frame(width: 112, alignment: .leading)
             Text("类型").frame(width: 58, alignment: .leading)
-            Text("操作").frame(width: 40, alignment: .center)
         }
         .settingsTableHeaderStyle()
     }
@@ -680,14 +681,6 @@ struct ActionEditorRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .layoutPriority(3)
 
-            Toggle("启用 \(action.title)", isOn: Binding(
-                get: { action.isEnabled },
-                set: { viewModel.setActionEnabled($0, actionID: action.id) }
-            ))
-            .toggleStyle(.switch)
-            .labelsHidden()
-            .frame(width: 56)
-
             ActionVisibilityMenu(action: action, viewModel: viewModel)
                 .frame(width: 130, alignment: .leading)
 
@@ -696,19 +689,6 @@ struct ActionEditorRow: View {
 
             ActionTypeBadge(action: action)
                 .frame(width: 58, alignment: .leading)
-
-            HStack(spacing: 0) {
-                RowIconButton(
-                    systemImage: "eye.slash",
-                    accessibilityLabel: "禁用 \(action.title)",
-                    helpText: "从右键菜单中隐藏",
-                    tone: .destructive,
-                    isDisabled: !action.isEnabled
-                ) {
-                    viewModel.setActionEnabled(false, actionID: action.id)
-                }
-            }
-            .frame(width: 40, alignment: .center)
         }
         .padding(.horizontal, 18)
         .frame(height: 56)

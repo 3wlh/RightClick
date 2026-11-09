@@ -252,6 +252,9 @@ final class SettingsViewModel: NSObject, ObservableObject {
         NotificationCenter.default.removeObserver(self)
     }
 
+    /// 全进程共享实例：App 场景、快捷菜单与设置窗口必须共用同一份配置状态。
+    static let shared = SettingsViewModel.bootstrap()
+
     static func bootstrap() -> SettingsViewModel {
         let viewModel = SettingsViewModel()
         viewModel.loadOrBootstrap()
@@ -935,19 +938,33 @@ final class SettingsViewModel: NSObject, ObservableObject {
         templateAddRequest += 1
     }
 
-    func moveTemplate(_ template: FileTemplate, offset: Int) {
+    func reorderTemplates(_ orderedIDs: [String], moving sourceID: String, targetID: String, placeAfter: Bool) {
         guard
-            let sourceIndex = config.fileTemplates.firstIndex(where: { $0.id == template.id })
+            sourceID != targetID,
+            orderedIDs.contains(sourceID),
+            orderedIDs.contains(targetID)
         else {
             return
         }
 
-        let targetIndex = sourceIndex + offset
-        guard config.fileTemplates.indices.contains(targetIndex) else {
+        var ids = orderedIDs
+        ids.removeAll { $0 == sourceID }
+        guard let targetIndex = ids.firstIndex(of: targetID) else {
+            return
+        }
+        ids.insert(sourceID, at: min(placeAfter ? targetIndex + 1 : targetIndex, ids.count))
+
+        guard ids != orderedIDs else {
             return
         }
 
-        config.fileTemplates.swapAt(sourceIndex, targetIndex)
+        let byID = Dictionary(uniqueKeysWithValues: config.fileTemplates.map { ($0.id, $0) })
+        let reordered = ids.compactMap { byID[$0] }
+        guard reordered.count == config.fileTemplates.count else {
+            return
+        }
+
+        config.fileTemplates = reordered
         normalizeCreateFileActionOrder()
         markUnsaved("模板顺序已更新")
     }
@@ -1022,27 +1039,33 @@ final class SettingsViewModel: NSObject, ObservableObject {
         return DeveloperEntrypointDraft(application: application, entrypointID: entrypointID)
     }
 
-    func moveDeveloperEntrypoint(_ entrypoint: DeveloperEntrypoint, visibleEntrypointIDs: [String], offset: Int) {
+    func reorderDeveloperEntrypoints(_ orderedIDs: [String], moving sourceID: String, targetID: String, placeAfter: Bool) {
         guard
-            let sourceVisibleIndex = visibleEntrypointIDs.firstIndex(of: entrypoint.id)
+            sourceID != targetID,
+            orderedIDs.contains(sourceID),
+            orderedIDs.contains(targetID)
         else {
             return
         }
 
-        let targetVisibleIndex = sourceVisibleIndex + offset
-        guard visibleEntrypointIDs.indices.contains(targetVisibleIndex) else {
+        var ids = orderedIDs
+        ids.removeAll { $0 == sourceID }
+        guard let targetIndex = ids.firstIndex(of: targetID) else {
+            return
+        }
+        ids.insert(sourceID, at: min(placeAfter ? targetIndex + 1 : targetIndex, ids.count))
+
+        guard ids != orderedIDs else {
             return
         }
 
-        let targetID = visibleEntrypointIDs[targetVisibleIndex]
-        guard
-            let sourceIndex = config.developerEntrypoints.firstIndex(where: { $0.id == entrypoint.id }),
-            let targetIndex = config.developerEntrypoints.firstIndex(where: { $0.id == targetID })
-        else {
+        let byID = Dictionary(uniqueKeysWithValues: config.developerEntrypoints.map { ($0.id, $0) })
+        let reordered = ids.compactMap { byID[$0] }
+        guard reordered.count == config.developerEntrypoints.count else {
             return
         }
 
-        config.developerEntrypoints.swapAt(sourceIndex, targetIndex)
+        config.developerEntrypoints = reordered
         normalizeDeveloperActionOrder()
         markUnsaved("开发者入口顺序已更新")
     }
@@ -1086,27 +1109,33 @@ final class SettingsViewModel: NSObject, ObservableObject {
         saveDirectoryChanges("已删除目录：\(bookmark.displayName)")
     }
 
-    func moveDirectoryBookmark(bookmarkID: String, visibleBookmarkIDs: [String], offset: Int) {
+    func reorderDirectoryBookmarks(_ orderedIDs: [String], moving sourceID: String, targetID: String, placeAfter: Bool) {
         guard
-            let sourceVisibleIndex = visibleBookmarkIDs.firstIndex(of: bookmarkID)
+            sourceID != targetID,
+            orderedIDs.contains(sourceID),
+            orderedIDs.contains(targetID)
         else {
             return
         }
 
-        let targetVisibleIndex = sourceVisibleIndex + offset
-        guard visibleBookmarkIDs.indices.contains(targetVisibleIndex) else {
+        var ids = orderedIDs
+        ids.removeAll { $0 == sourceID }
+        guard let targetIndex = ids.firstIndex(of: targetID) else {
+            return
+        }
+        ids.insert(sourceID, at: min(placeAfter ? targetIndex + 1 : targetIndex, ids.count))
+
+        guard ids != orderedIDs else {
             return
         }
 
-        let targetID = visibleBookmarkIDs[targetVisibleIndex]
-        guard
-            let sourceIndex = bookmarks.bookmarks.firstIndex(where: { $0.id == bookmarkID }),
-            let targetIndex = bookmarks.bookmarks.firstIndex(where: { $0.id == targetID })
-        else {
+        let byID = Dictionary(uniqueKeysWithValues: bookmarks.bookmarks.map { ($0.id, $0) })
+        let reordered = ids.compactMap { byID[$0] }
+        guard reordered.count == bookmarks.bookmarks.count else {
             return
         }
 
-        bookmarks.bookmarks.swapAt(sourceIndex, targetIndex)
+        bookmarks.bookmarks = reordered
         reorderDirectoryIDReferences()
         normalizeDirectoryActionOrder()
         saveDirectoryChanges("目录顺序已更新")

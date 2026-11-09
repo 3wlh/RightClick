@@ -3,34 +3,6 @@ import RightClickCore
 import SwiftUI
 import UniformTypeIdentifiers
 
-struct MenuBarContentView: View {
-    @ObservedObject var viewModel: SettingsViewModel
-    @Environment(\.openWindow) private var openWindow
-
-    var body: some View {
-        Button("打开设置") {
-            openSettings()
-        }
-        Button("修复右键菜单...") {
-            viewModel.repairFinderContextMenu(restartFinder: true, userInitiated: true)
-            openSettings(section: .onboarding)
-        }
-        Divider()
-        Button("退出 \(AppMetadata.displayName)") {
-            NSApplication.shared.terminate(nil)
-        }
-    }
-
-    private func openSettings(section: SettingsViewModel.Section? = nil) {
-        if let section {
-            viewModel.selectedSection = section
-        }
-
-        openWindow(id: "settings")
-        NSApplication.shared.activate(ignoringOtherApps: true)
-    }
-}
-
 struct SettingsRootView: View {
     @ObservedObject var viewModel: SettingsViewModel
     @State private var visualSelection: SettingsViewModel.Section = .onboarding

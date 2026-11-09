@@ -6,15 +6,36 @@ import UniformTypeIdentifiers
 struct DeveloperEntrypointListView: View {
     @ObservedObject var viewModel: SettingsViewModel
     @State private var editingDraft: DeveloperEntrypointDraft?
+    @State private var draggingEntrypointID: String?
 
     var body: some View {
         let rows = viewModel.config.developerEntrypoints
-        let visibleEntrypointIDs = rows.map(\.id)
 
         DesignPageScroll {
             DesignPanel(padding: 0) {
                 LazyVStack(spacing: 0) {
                     DeveloperTableHeader()
+
+                    if let first = rows.first {
+                        Color.clear
+                            .frame(height: 14)
+                            .contentShape(Rectangle())
+                            .onDrop(
+                                of: [UTType.text],
+                                delegate: ReorderDropDelegate(
+                                    targetID: first.id,
+                                    rowHeight: 0,
+                                    draggingID: $draggingEntrypointID
+                                ) { sourceID, targetID, _ in
+                                    viewModel.reorderDeveloperEntrypoints(
+                                        rows.map(\.id),
+                                        moving: sourceID,
+                                        targetID: targetID,
+                                        placeAfter: false
+                                    )
+                                }
+                            )
+                    }
 
                     if rows.isEmpty {
                         EmptyStateRow(title: "暂无开发者入口", systemImage: "terminal")
@@ -23,16 +44,29 @@ struct DeveloperEntrypointListView: View {
                             DeveloperTableRow(
                                 entrypoint: entrypoint,
                                 viewModel: viewModel,
-                                canMoveUp: index > 0,
-                                canMoveDown: index < rows.count - 1,
-                                onMoveUp: {
-                                    viewModel.moveDeveloperEntrypoint(entrypoint, visibleEntrypointIDs: visibleEntrypointIDs, offset: -1)
-                                },
-                                onMoveDown: {
-                                    viewModel.moveDeveloperEntrypoint(entrypoint, visibleEntrypointIDs: visibleEntrypointIDs, offset: 1)
-                                },
                                 onEdit: {
                                     editingDraft = DeveloperEntrypointDraft(entrypoint: entrypoint)
+                                }
+                            )
+                            .contentShape(Rectangle())
+                        .opacity(draggingEntrypointID == entrypoint.id ? 0.5 : 1)
+                            .onDrag {
+                                draggingEntrypointID = entrypoint.id
+                                return NSItemProvider(object: entrypoint.id as NSString)
+                            }
+                            .onDrop(
+                                of: [UTType.text],
+                                delegate: ReorderDropDelegate(
+                                    targetID: entrypoint.id,
+                                    rowHeight: 52,
+                                    draggingID: $draggingEntrypointID
+                                ) { sourceID, targetID, placeAfter in
+                                    viewModel.reorderDeveloperEntrypoints(
+                                        rows.map(\.id),
+                                        moving: sourceID,
+                                        targetID: targetID,
+                                        placeAfter: placeAfter
+                                    )
                                 }
                             )
                             if index < rows.count - 1 {
@@ -40,12 +74,33 @@ struct DeveloperEntrypointListView: View {
                             }
                         }
                     }
+
+                    if let last = rows.last {
+                        Color.clear
+                            .frame(height: 14)
+                            .contentShape(Rectangle())
+                            .onDrop(
+                                of: [UTType.text],
+                                delegate: ReorderDropDelegate(
+                                    targetID: last.id,
+                                    rowHeight: 0,
+                                    draggingID: $draggingEntrypointID
+                                ) { sourceID, targetID, _ in
+                                    viewModel.reorderDeveloperEntrypoints(
+                                        rows.map(\.id),
+                                        moving: sourceID,
+                                        targetID: targetID,
+                                        placeAfter: true
+                                    )
+                                }
+                            )
+                    }
                 }
             }
 
-            DeveloperMenuPreviewCard(items: developerPreviewItems)
-
             DeveloperHintBanner()
+
+            DeveloperMenuPreviewCard(items: developerPreviewItems)
         }
         .sheet(item: $editingDraft) { draft in
             DeveloperEntrypointEditorSheet(
@@ -96,7 +151,9 @@ struct DeveloperEntrypointListView: View {
 struct DeveloperTableHeader: View {
     var body: some View {
         HStack(spacing: 10) {
-            Text("排序").frame(width: 58, alignment: .center)
+            Text("排序")
+                .fixedSize()
+                .frame(width: 18, alignment: .center)
             Text("名称").frame(width: 200, alignment: .leading)
             Text("目标方式").frame(maxWidth: .infinity, alignment: .leading)
             Text("快捷键").frame(width: 64, alignment: .leading)
@@ -110,10 +167,6 @@ struct DeveloperTableHeader: View {
 struct DeveloperTableRow: View {
     let entrypoint: DeveloperEntrypoint
     @ObservedObject var viewModel: SettingsViewModel
-    let canMoveUp: Bool
-    let canMoveDown: Bool
-    let onMoveUp: () -> Void
-    let onMoveDown: () -> Void
     let onEdit: () -> Void
 
     private var matchingAction: RightClickAction? {
@@ -124,13 +177,11 @@ struct DeveloperTableRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            SortStepControls(
-                canMoveUp: canMoveUp,
-                canMoveDown: canMoveDown,
-                onMoveUp: onMoveUp,
-                onMoveDown: onMoveDown
-            )
-            .frame(width: 58)
+            Image(systemName: "line.3.horizontal")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(SettingsTheme.muted)
+                .frame(width: 18)
+                .help("拖动调整顺序")
 
             Button(action: onEdit) {
                 HStack(spacing: 10) {

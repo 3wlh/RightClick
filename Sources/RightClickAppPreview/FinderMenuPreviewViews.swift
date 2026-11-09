@@ -211,11 +211,23 @@ struct FinderMenuPreview: View {
                 }
             }
 
-            HStack(alignment: .top, spacing: 10) {
-                FinderMenuBox(items: rootItems)
+            // 宽度足够时（如页面底部的整行预览）根菜单与子菜单并排；
+            // 窄容器内自动退化为上下排列，避免被裁剪。
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 10) {
+                    FinderMenuBox(items: rootItems)
 
-                if !submenuItems.isEmpty {
-                    FinderMenuBox(title: submenuTitle, items: submenuItems)
+                    if !submenuItems.isEmpty {
+                        FinderMenuBox(title: submenuTitle, items: submenuItems)
+                    }
+                }
+
+                VStack(spacing: 10) {
+                    FinderMenuBox(items: rootItems)
+
+                    if !submenuItems.isEmpty {
+                        FinderMenuBox(title: submenuTitle, items: submenuItems)
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .center)

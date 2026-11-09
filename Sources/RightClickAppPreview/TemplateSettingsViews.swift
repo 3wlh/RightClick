@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 struct TemplateListView: View {
     @ObservedObject var viewModel: SettingsViewModel
     @State private var editingDraft: TemplateDraft?
+    @State private var draggingTemplateID: String?
 
     var body: some View {
         let templates = viewModel.config.fileTemplates
@@ -14,6 +15,28 @@ struct TemplateListView: View {
             DesignPanel(padding: 0) {
                 LazyVStack(spacing: 0) {
                     TemplateTableHeader()
+
+                    if let first = templates.first {
+                        Color.clear
+                            .frame(height: 14)
+                            .contentShape(Rectangle())
+                            .onDrop(
+                                of: [UTType.text],
+                                delegate: ReorderDropDelegate(
+                                    targetID: first.id,
+                                    rowHeight: 0,
+                                    draggingID: $draggingTemplateID
+                                ) { sourceID, targetID, _ in
+                                    viewModel.reorderTemplates(
+                                        templates.map(\.id),
+                                        moving: sourceID,
+                                        targetID: targetID,
+                                        placeAfter: false
+                                    )
+                                }
+                            )
+                    }
+
                     if templates.isEmpty {
                         EmptyStateRow(title: "暂无模板", systemImage: "doc.badge.plus")
                     } else {
@@ -21,16 +44,29 @@ struct TemplateListView: View {
                             TemplateTableRow(
                                 template: template,
                                 viewModel: viewModel,
-                                canMoveUp: index > 0,
-                                canMoveDown: index < templates.count - 1,
                                 onEdit: {
                                     editingDraft = TemplateDraft(template: template)
-                                },
-                                onMoveUp: {
-                                    viewModel.moveTemplate(template, offset: -1)
-                                },
-                                onMoveDown: {
-                                    viewModel.moveTemplate(template, offset: 1)
+                                }
+                            )
+                            .contentShape(Rectangle())
+                        .opacity(draggingTemplateID == template.id ? 0.5 : 1)
+                            .onDrag {
+                                draggingTemplateID = template.id
+                                return NSItemProvider(object: template.id as NSString)
+                            }
+                            .onDrop(
+                                of: [UTType.text],
+                                delegate: ReorderDropDelegate(
+                                    targetID: template.id,
+                                    rowHeight: 52,
+                                    draggingID: $draggingTemplateID
+                                ) { sourceID, targetID, placeAfter in
+                                    viewModel.reorderTemplates(
+                                        templates.map(\.id),
+                                        moving: sourceID,
+                                        targetID: targetID,
+                                        placeAfter: placeAfter
+                                    )
                                 }
                             )
                             if index < templates.count - 1 {
@@ -38,12 +74,33 @@ struct TemplateListView: View {
                             }
                         }
                     }
+
+                    if let last = templates.last {
+                        Color.clear
+                            .frame(height: 14)
+                            .contentShape(Rectangle())
+                            .onDrop(
+                                of: [UTType.text],
+                                delegate: ReorderDropDelegate(
+                                    targetID: last.id,
+                                    rowHeight: 0,
+                                    draggingID: $draggingTemplateID
+                                ) { sourceID, targetID, _ in
+                                    viewModel.reorderTemplates(
+                                        templates.map(\.id),
+                                        moving: sourceID,
+                                        targetID: targetID,
+                                        placeAfter: true
+                                    )
+                                }
+                            )
+                    }
                 }
             }
 
-            TemplateMenuPreviewPanel(items: templatePreviewItems)
-
             TemplateHintBanner()
+
+            TemplateMenuPreviewPanel(items: templatePreviewItems)
         }
         .sheet(item: $editingDraft) { draft in
             TemplateEditorSheet(draft: draft) { savedDraft in
@@ -84,7 +141,9 @@ struct TemplateListView: View {
 struct TemplateTableHeader: View {
     var body: some View {
         HStack(spacing: 16) {
-            Text("排序").frame(width: 58, alignment: .center)
+            Text("排序")
+                .fixedSize()
+                .frame(width: 18, alignment: .center)
             Text("模板名称").frame(maxWidth: .infinity, alignment: .leading)
             Text("扩展名").frame(width: 150, alignment: .leading)
             Text("启用").frame(width: 84, alignment: .center)
@@ -97,11 +156,7 @@ struct TemplateTableHeader: View {
 struct TemplateTableRow: View {
     let template: FileTemplate
     @ObservedObject var viewModel: SettingsViewModel
-    let canMoveUp: Bool
-    let canMoveDown: Bool
     let onEdit: () -> Void
-    let onMoveUp: () -> Void
-    let onMoveDown: () -> Void
 
     private var matchingAction: RightClickAction? {
         viewModel.config.actions.first {
@@ -111,13 +166,11 @@ struct TemplateTableRow: View {
 
     var body: some View {
         HStack(spacing: 16) {
-            SortStepControls(
-                canMoveUp: canMoveUp,
-                canMoveDown: canMoveDown,
-                onMoveUp: onMoveUp,
-                onMoveDown: onMoveDown
-            )
-            .frame(width: 58, alignment: .center)
+            Image(systemName: "line.3.horizontal")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(SettingsTheme.muted)
+                .frame(width: 18)
+                .help("拖动调整顺序")
 
             Button(action: onEdit) {
                 HStack(spacing: 12) {

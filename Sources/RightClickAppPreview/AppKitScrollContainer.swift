@@ -18,8 +18,13 @@ struct AppKitScrollContainer<Content: View>: NSViewRepresentable {
 final class ScrollHostView: NSScrollView {
     private let hostingView: NSHostingView<AnyView>
 
+    /// 内容矮于视口时 NSHostingView 会垂直居中，这里强制顶部对齐并撑满视口。
+    private static func topAlignedContent(_ content: AnyView) -> AnyView {
+        AnyView(content.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading))
+    }
+
     init(content: AnyView) {
-        hostingView = NSHostingView(rootView: content)
+        hostingView = NSHostingView(rootView: Self.topAlignedContent(content))
         super.init(frame: .zero)
 
         drawsBackground = false
@@ -40,7 +45,7 @@ final class ScrollHostView: NSScrollView {
     }
 
     func updateContent(_ content: AnyView) {
-        hostingView.rootView = content
+        hostingView.rootView = Self.topAlignedContent(content)
         needsLayout = true
     }
 

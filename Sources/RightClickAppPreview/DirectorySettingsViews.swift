@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 struct DirectoryListView: View {
     @ObservedObject var viewModel: SettingsViewModel
     @State private var searchText = ""
+    @State private var draggingBookmarkID: String?
 
     private var bookmarks: [DirectoryBookmark] {
         viewModel.bookmarks.bookmarks
@@ -28,7 +29,6 @@ struct DirectoryListView: View {
 
     var body: some View {
         let rows = filteredBookmarks
-        let visibleBookmarkIDs = rows.map(\.id)
 
         DesignPageScroll {
             SearchField(placeholder: "搜索目录名称或路径", text: $searchText)
@@ -37,26 +37,61 @@ struct DirectoryListView: View {
             DesignPanel(padding: 0) {
                 LazyVStack(spacing: 0) {
                     DirectoryTableHeader()
+
+                    if let first = rows.first {
+                        Color.clear
+                            .frame(height: 14)
+                            .contentShape(Rectangle())
+                            .onDrop(
+                                of: [UTType.text],
+                                delegate: ReorderDropDelegate(
+                                    targetID: first.id,
+                                    rowHeight: 0,
+                                    draggingID: $draggingBookmarkID
+                                ) { sourceID, targetID, _ in
+                                    viewModel.reorderDirectoryBookmarks(
+                                        rows.map(\.id),
+                                        moving: sourceID,
+                                        targetID: targetID,
+                                        placeAfter: false
+                                    )
+                                }
+                            )
+                    }
+
                     ForEach(Array(rows.enumerated()), id: \.element.id) { index, bookmark in
                         DirectoryTableRow(
                             bookmark: bookmark,
                             isEnabled: viewModel.isDirectoryBookmarkEnabled(bookmark.id),
-                            canMoveUp: index > 0,
-                            canMoveDown: index < rows.count - 1,
                             onToggle: { isEnabled in
                                 viewModel.setDirectoryBookmarkEnabled(isEnabled, bookmarkID: bookmark.id)
-                            },
-                            onMoveUp: {
-                                viewModel.moveDirectoryBookmark(bookmarkID: bookmark.id, visibleBookmarkIDs: visibleBookmarkIDs, offset: -1)
-                            },
-                            onMoveDown: {
-                                viewModel.moveDirectoryBookmark(bookmarkID: bookmark.id, visibleBookmarkIDs: visibleBookmarkIDs, offset: 1)
                             },
                             onEdit: {
                                 viewModel.replaceDirectoryBookmarkFromPanel(bookmarkID: bookmark.id)
                             },
                             onDelete: {
                                 viewModel.deleteDirectoryBookmark(bookmarkID: bookmark.id)
+                            }
+                        )
+                        .contentShape(Rectangle())
+                        .opacity(draggingBookmarkID == bookmark.id ? 0.5 : 1)
+                        .onDrag {
+                            draggingBookmarkID = bookmark.id
+                            return NSItemProvider(object: bookmark.id as NSString)
+                        }
+                        .onDrop(
+                            of: [UTType.text],
+                            delegate: ReorderDropDelegate(
+                                targetID: bookmark.id,
+                                rowHeight: 52,
+                                draggingID: $draggingBookmarkID
+                            ) { sourceID, targetID, placeAfter in
+                                viewModel.reorderDirectoryBookmarks(
+                                    rows.map(\.id),
+                                    moving: sourceID,
+                                    targetID: targetID,
+                                    placeAfter: placeAfter
+                                )
                             }
                         )
                         if index < rows.count - 1 {
@@ -66,12 +101,33 @@ struct DirectoryListView: View {
                     if rows.isEmpty {
                         EmptyStateRow(title: "没有匹配的目录", systemImage: "folder.badge.questionmark")
                     }
+
+                    if let last = rows.last {
+                        Color.clear
+                            .frame(height: 14)
+                            .contentShape(Rectangle())
+                            .onDrop(
+                                of: [UTType.text],
+                                delegate: ReorderDropDelegate(
+                                    targetID: last.id,
+                                    rowHeight: 0,
+                                    draggingID: $draggingBookmarkID
+                                ) { sourceID, targetID, _ in
+                                    viewModel.reorderDirectoryBookmarks(
+                                        rows.map(\.id),
+                                        moving: sourceID,
+                                        targetID: targetID,
+                                        placeAfter: true
+                                    )
+                                }
+                            )
+                    }
                 }
             }
 
-            DirectoryMenuPreviewPanel(items: previewItems)
-
             DirectoryHintBanner()
+
+            DirectoryMenuPreviewPanel(items: previewItems)
         }
     }
 
@@ -130,7 +186,9 @@ struct DirectoryHintBanner: View {
 struct DirectoryTableHeader: View {
     var body: some View {
         HStack(spacing: 16) {
-            Text("排序").frame(width: 58, alignment: .center)
+            Text("排序")
+                .fixedSize()
+                .frame(width: 18, alignment: .center)
             Text("名称").frame(width: 260, alignment: .leading)
             Text("路径").frame(maxWidth: .infinity, alignment: .leading)
             Text("启用").frame(width: 90, alignment: .center)
@@ -143,23 +201,17 @@ struct DirectoryTableHeader: View {
 struct DirectoryTableRow: View {
     let bookmark: DirectoryBookmark
     let isEnabled: Bool
-    let canMoveUp: Bool
-    let canMoveDown: Bool
     let onToggle: (Bool) -> Void
-    let onMoveUp: () -> Void
-    let onMoveDown: () -> Void
     let onEdit: () -> Void
     let onDelete: () -> Void
 
     var body: some View {
         HStack(spacing: 16) {
-            SortStepControls(
-                canMoveUp: canMoveUp,
-                canMoveDown: canMoveDown,
-                onMoveUp: onMoveUp,
-                onMoveDown: onMoveDown
-            )
-            .frame(width: 58, alignment: .center)
+            Image(systemName: "line.3.horizontal")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(SettingsTheme.muted)
+                .frame(width: 18)
+                .help("拖动调整顺序")
 
             HStack(spacing: 12) {
                 MenuIconView(

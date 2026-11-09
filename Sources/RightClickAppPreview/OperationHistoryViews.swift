@@ -15,11 +15,13 @@ struct OperationHistoryView: View {
 
     var body: some View {
         let actions = fileOperationActions
-        let previewActions = Array(actions.prefix(8))
+        let previewActions = Array(actions.filter(\.isEnabled).prefix(8))
 
         DesignPageScroll {
             DesignPanel(padding: 0) {
                 LazyVStack(spacing: 0) {
+                    FileOperationTableHeader()
+
                     if let first = actions.first {
                         Color.clear
                             .frame(height: 14)
@@ -46,6 +48,7 @@ struct OperationHistoryView: View {
                     } else {
                         ForEach(Array(actions.enumerated()), id: \.element.id) { index, action in
                             FileOperationListRow(action: action, viewModel: viewModel)
+                                .contentShape(Rectangle())
                                 .opacity(draggingActionID == action.id ? 0.5 : 1)
                                 .onDrag {
                                     draggingActionID = action.id
@@ -96,17 +99,19 @@ struct OperationHistoryView: View {
             }
 
             PreviewSection(
-                    rootItems: FinderPreviewRootMenu.standardContainerMenu(
-                        highlighting: FinderMenuItem(
-                            title: "文件操作",
-                            systemImage: "doc.on.doc",
-                            tint: SettingsTheme.accent,
-                            isHighlighted: true,
-                            hasSubmenu: true
-                        )
-                    ),
-                    submenuTitle: nil,
-                    submenuItems: previewActions.map {
+                rootItems: FinderPreviewRootMenu.standardContainerMenu(
+                    highlighting: FinderMenuItem(
+                        title: "文件操作",
+                        systemImage: "doc.on.doc",
+                        tint: SettingsTheme.accent,
+                        isHighlighted: true,
+                        hasSubmenu: true
+                    )
+                ),
+                submenuTitle: nil,
+                submenuItems: previewActions.isEmpty
+                    ? [FinderMenuItem(title: "暂无启用操作")]
+                    : previewActions.map {
                         FinderMenuItem(
                             title: $0.title,
                             icon: MenuIconResolver.icon(for: $0, config: viewModel.config, bookmarks: viewModel.bookmarks),
@@ -129,6 +134,23 @@ struct OperationHistoryView: View {
                 }
             }
         }
+    }
+}
+
+struct FileOperationTableHeader: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            Text("排序")
+                .fixedSize()
+                .frame(width: 18, alignment: .center)
+            Color.clear
+                .frame(width: 26)
+            Text("菜单项")
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text("启用")
+                .frame(width: 44, alignment: .center)
+        }
+        .settingsTableHeaderStyle()
     }
 }
 

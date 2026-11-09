@@ -60,6 +60,8 @@ struct OnboardingView: View {
             }
             .padding(.vertical, 8)
 
+            FinderRepairPanel(viewModel: viewModel)
+
             VStack(alignment: .leading, spacing: 0) {
                 Text("应用设置")
                     .font(.system(size: 14, weight: .semibold))
@@ -67,6 +69,8 @@ struct OnboardingView: View {
                     .padding(.vertical, 14)
 
                 ThemeSettingsPanel()
+                Divider()
+                MenuBarQuickMenuPanel()
                 Divider()
                 LaunchAtLoginPanel(viewModel: viewModel)
                 Divider()
@@ -143,6 +147,39 @@ struct ThemeSettingsPanel: View {
                 .pickerStyle(.segmented)
                 .frame(width: 286)
                 .accessibilityLabel("主题")
+            }
+        }
+    }
+}
+
+struct MenuBarQuickMenuPanel: View {
+    @AppStorage(MenuBarQuickMenuPreference.storageKey) private var isQuickMenuEnabled = true
+
+    var body: some View {
+        DesignPanel {
+            HStack(alignment: .center, spacing: 16) {
+                IconBadge(systemImage: "contextualmenu.and.cursorarrow", tint: SettingsTheme.accent)
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("菜单栏快捷菜单")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(SettingsTheme.ink)
+                    Text(isQuickMenuEnabled
+                        ? "快捷菜单显示在 macOS 菜单栏，可随时从这里打开设置。"
+                        : "快捷菜单已隐藏，从启动台打开 RightClick 将直接进入设置窗口。")
+                        .font(.system(size: 12))
+                        .foregroundStyle(SettingsTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .layoutPriority(1)
+
+                Spacer(minLength: 12)
+
+                Toggle("显示菜单栏快捷菜单", isOn: $isQuickMenuEnabled)
+                    .toggleStyle(.switch)
+                    .controlSize(.large)
+                    .labelsHidden()
+                    .accessibilityLabel("显示菜单栏快捷菜单")
             }
         }
     }
@@ -309,6 +346,43 @@ struct LaunchAtLoginPanel: View {
             return .red
         case .neutral:
             return SettingsTheme.accent
+        }
+    }
+}
+
+/// 始终显示的右键菜单修复入口；扩展状态正常时也允许用户手动重建菜单。
+struct FinderRepairPanel: View {
+    @ObservedObject var viewModel: SettingsViewModel
+
+    var body: some View {
+        DesignPanel {
+            HStack(alignment: .center, spacing: 16) {
+                IconBadge(systemImage: "wrench.and.screwdriver", tint: SettingsTheme.accent)
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("修复右键菜单")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(SettingsTheme.ink)
+                    Text("右键菜单没有出现或意外消失时，重新注册 Finder Extension 并重启 Finder。")
+                        .font(.system(size: 12))
+                        .foregroundStyle(SettingsTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .layoutPriority(1)
+
+                Spacer(minLength: 12)
+
+                Button {
+                    viewModel.restartFinder()
+                } label: {
+                    Label(viewModel.isRepairingFinderMenu ? "修复中..." : "修复并重启 Finder", systemImage: "arrow.clockwise")
+                        .frame(minWidth: 136)
+                }
+                .buttonStyle(SettingsButtonStyle(isPrimary: true))
+                .controlSize(.large)
+                .disabled(viewModel.isRepairingFinderMenu)
+                .help("会短暂关闭并重新打开 Finder 窗口")
+            }
         }
     }
 }
