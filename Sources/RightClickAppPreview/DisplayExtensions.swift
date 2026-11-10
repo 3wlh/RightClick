@@ -23,6 +23,8 @@ extension RightClickAction {
             return SettingsTheme.accent
         case .fileOperations:
             return .cyan
+        case .commandTemplates:
+            return SettingsTheme.accent
         case .none:
             return SettingsTheme.muted
         }
@@ -35,6 +37,10 @@ extension RightClickAction {
 
         if group == .developerEntrypoints || kind == .openInApp {
             return "应用"
+        }
+
+        if kind == .runCommand || group == .commandTemplates {
+            return "命令"
         }
 
         return "操作"
@@ -66,6 +72,10 @@ extension RightClickAction {
             return "永久删除所选项目，不进入废纸篓"
         case .undoOperation:
             return "撤销最近一次文件操作"
+        case .airDrop:
+            return "通过 AirDrop 分享所选项目"
+        case .runCommand:
+            return "执行自定义命令模板"
         }
     }
 
@@ -111,6 +121,10 @@ extension ActionKind {
             return "直接删除"
         case .undoOperation:
             return "撤销操作"
+        case .airDrop:
+            return "AirDrop 分享"
+        case .runCommand:
+            return "命令模板"
         }
     }
 
@@ -173,6 +187,8 @@ extension MenuGroup {
             return "开发者工具"
         case .fileOperations:
             return "文件操作"
+        case .commandTemplates:
+            return "命令模板"
         }
     }
 
@@ -188,6 +204,8 @@ extension MenuGroup {
             return .systemSymbol("chevron.left.forwardslash.chevron.right")
         case .fileOperations:
             return .systemSymbol("doc.on.doc")
+        case .commandTemplates:
+            return .systemSymbol("terminal")
         }
     }
 
@@ -199,6 +217,8 @@ extension MenuGroup {
             return SettingsTheme.accent
         case .fileOperations:
             return .cyan
+        case .commandTemplates:
+            return SettingsTheme.accent
         }
     }
 }

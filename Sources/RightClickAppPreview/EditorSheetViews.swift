@@ -41,6 +41,7 @@ struct EditorTextField: View {
     let placeholder: String
     var helper: String? = nil
     var systemImage: String? = nil
+    var prefixText: String? = nil
     @Binding var text: String
     @FocusState private var isFocused: Bool
 
@@ -51,7 +52,11 @@ struct EditorTextField: View {
                 .foregroundStyle(SettingsTheme.ink)
 
             HStack(spacing: 9) {
-                if let systemImage {
+                if let prefixText {
+                    Text(prefixText)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(SettingsTheme.muted)
+                } else if let systemImage {
                     Image(systemName: systemImage)
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(SettingsTheme.muted)
@@ -88,6 +93,7 @@ struct EditorTextArea: View {
     let title: String
     let helper: String
     @Binding var text: String
+    var minHeight: CGFloat = 176
     @FocusState private var isFocused: Bool
 
     var body: some View {
@@ -99,6 +105,7 @@ struct EditorTextArea: View {
                 Text(helper)
                     .font(.system(size: 11))
                     .foregroundStyle(SettingsTheme.muted)
+                    .textSelection(.enabled)
             }
 
             TextEditor(text: $text)
@@ -108,7 +115,7 @@ struct EditorTextArea: View {
                 .accessibilityLabel(title)
                 .scrollContentBackground(.hidden)
                 .padding(8)
-                .frame(minHeight: 176)
+                .frame(minHeight: minHeight)
                 .background(SettingsTheme.controlBackground, in: RoundedRectangle(cornerRadius: 8))
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)

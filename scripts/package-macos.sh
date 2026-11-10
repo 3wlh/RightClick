@@ -166,6 +166,19 @@ write_app_info_plist() {
   <true/>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>RightClick 需要控制“终端”来执行你配置的命令模板。</string>
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>$BUNDLE_IDENTIFIER.command</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>rightclick</string>
+      </array>
+    </dict>
+  </array>
 </dict>
 </plist>
 PLIST
@@ -251,6 +264,29 @@ write_finder_extension_info_plist() {
 PLIST
 }
 
+write_app_entitlements_plist() {
+  local plist_path="$1"
+
+  # 主 App 不使用 App Sandbox：AirDrop 分享与后台静默命令都需要读取用户选中的任意文件，
+  # 沙盒下只能访问自身容器，会导致分享面板拿不到文件而静默失败。
+  cat > "$plist_path" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.network.client</key>
+  <true/>
+  <key>com.apple.security.automation.apple-events</key>
+  <true/>
+  <key>com.apple.security.temporary-exception.apple-events</key>
+  <array>
+    <string>com.apple.Terminal</string>
+  </array>
+</dict>
+</plist>
+PLIST
+}
+
 write_sandbox_entitlements_plist() {
   local plist_path="$1"
   local include_network_client="$2"
@@ -268,6 +304,12 @@ PLIST
     cat >> "$plist_path" <<PLIST
   <key>com.apple.security.network.client</key>
   <true/>
+  <key>com.apple.security.automation.apple-events</key>
+  <true/>
+  <key>com.apple.security.temporary-exception.apple-events</key>
+  <array>
+    <string>com.apple.Terminal</string>
+  </array>
 PLIST
   fi
 
@@ -781,7 +823,7 @@ Developer ID signed or notarized.
 Minimum macOS: ${RIGHTCLICKPRO_MACOS_DEPLOYMENT_TARGET}
 NOTES
 
-  write_sandbox_entitlements_plist "$app_entitlements_path" 1
+  write_app_entitlements_plist "$app_entitlements_path"
   write_sandbox_entitlements_plist "$finder_entitlements_path" 0
   write_xpc_entitlements_plist "$xpc_entitlements_path"
   codesign_if_available "$app_entitlements_path" "$finder_entitlements_path" "$xpc_entitlements_path" "$app_path" "$xpc_path" "$appex_path" "$appex_xpc_path"

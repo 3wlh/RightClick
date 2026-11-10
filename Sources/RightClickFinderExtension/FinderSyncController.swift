@@ -339,6 +339,14 @@ final class FinderSyncController: FIFinderSync, @unchecked Sendable {
 
     private func sendToActionRunner(_ request: ActionRequest) {
         let actionKind = cachedConfig.actions.first(where: { $0.id == request.actionID })?.kind
+        if actionKind == .runCommand {
+            dispatchCommandToMainApp(request)
+            return
+        }
+        if actionKind == .airDrop {
+            performAirDrop(request)
+            return
+        }
         guard actionKind == .deletePermanently else {
             dispatchToActionRunner(request, actionKind: actionKind)
             return
@@ -356,6 +364,29 @@ final class FinderSyncController: FIFinderSync, @unchecked Sendable {
             }
             self.dispatchToActionRunner(request, actionKind: actionKind)
         }
+    }
+
+    /// 命令需要实时输出，Finder 扩展只负责把请求转发给常驻主 App 执行。
+    /// 沙盒进程无法发送携带 userInfo 的分布式通知，改用 URL Scheme 唤起主 App。
+    private func dispatchCommandToMainApp(_ request: ActionRequest) {
+        let runRequest = CommandRunRequest(actionID: request.actionID, context: request.context)
+        guard let url = CommandRunURL.url(for: runRequest) else {
+            publishActionFailure(request: request, actionKind: .runCommand, message: "命令请求编码失败")
+            return
+        }
+        NSWorkspace.shared.open(url)
+    }
+
+    /// AirDrop 分享面板需要前台 App 展示，转发给主 App 执行。
+    private func performAirDrop(_ request: ActionRequest) {
+        let paths = request.context.selectedItems.isEmpty
+            ? [request.context.targetDirectory.path]
+            : request.context.selectedItems.map(\.path)
+        guard let url = AirDropShareURL.url(for: AirDropShareRequest(paths: paths)) else {
+            publishActionFailure(request: request, actionKind: .airDrop, message: "AirDrop 请求编码失败")
+            return
+        }
+        NSWorkspace.shared.open(url)
     }
 
     private func dispatchToActionRunner(_ request: ActionRequest, actionKind: ActionKind?) {
@@ -451,6 +482,8 @@ final class FinderSyncController: FIFinderSync, @unchecked Sendable {
             return .systemSymbol("chevron.left.forwardslash.chevron.right")
         case .fileOperations:
             return .systemSymbol("doc.on.doc")
+        case .commandTemplates:
+            return .systemSymbol("terminal")
         }
     }
 
@@ -698,6 +731,8 @@ final class FinderSyncController: FIFinderSync, @unchecked Sendable {
             return "开发者工具"
         case .fileOperations:
             return "文件操作"
+        case .commandTemplates:
+            return "命令模板"
         }
     }
 }

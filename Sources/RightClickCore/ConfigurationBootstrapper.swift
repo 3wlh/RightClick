@@ -536,6 +536,23 @@ public struct ConfigurationBootstrapper {
             order += 10
         }
 
+        for template in RightClickConfig.defaultCommandTemplates() {
+            actions.append(
+                RightClickAction(
+                    id: "run-\(template.id)",
+                    title: template.title,
+                    kind: .runCommand,
+                    visibility: [.selection, .container],
+                    placement: .submenu,
+                    group: .commandTemplates,
+                    isEnabled: false,
+                    order: order,
+                    payload: ActionPayload(commandTemplateID: template.id)
+                )
+            )
+            order += 10
+        }
+
         return actions
     }
 }

@@ -1,5 +1,6 @@
 .build/
 .swiftpm/
+.trae/
 DerivedData/
 dist/
 dist-*/

@@ -100,6 +100,7 @@ final class SettingsViewModel: NSObject, ObservableObject {
         case actions = "右键菜单管理"
         case directories = "常用目录快捷直达"
         case developer = "应用快捷入口"
+        case commands = "命令模板"
         case history = "文件操作"
         case templates = "新建文件模板"
 
@@ -119,6 +120,8 @@ final class SettingsViewModel: NSObject, ObservableObject {
                 return "文件操作"
             case .templates:
                 return "新建文件"
+            case .commands:
+                return "命令模板"
             }
         }
 
@@ -136,6 +139,8 @@ final class SettingsViewModel: NSObject, ObservableObject {
                 return "doc.on.doc"
             case .templates:
                 return "doc"
+            case .commands:
+                return "terminal"
             }
         }
 
@@ -153,6 +158,8 @@ final class SettingsViewModel: NSObject, ObservableObject {
                 return "管理剪切、粘贴、拷贝路径、隐藏与删除等文件操作菜单项。"
             case .templates:
                 return "管理 Finder 右键菜单中的新建文件类型、排序与启用状态。"
+            case .commands:
+                return "管理 Finder 右键菜单中的自定义命令模板，运行结果实时显示。"
             }
         }
     }
@@ -215,6 +222,7 @@ final class SettingsViewModel: NSObject, ObservableObject {
     private var pendingUnsavedStatusMessage: String?
     @Published var developerEntrypointAddRequest = 0
     @Published var templateAddRequest = 0
+    @Published var commandTemplateAddRequest = 0
     @Published var actionSearchText = ""
     @Published var isRepairingFinderMenu = false
     @Published var finderExtensionNeedsAttention = false
@@ -265,6 +273,13 @@ final class SettingsViewModel: NSObject, ObservableObject {
 
     var enabledActionCount: Int {
         config.actions.filter(\.isEnabled).count
+    }
+
+    /// 「文件操作」页展示的菜单项数量，与列表页过滤规则保持一致。
+    var fileOperationActionCount: Int {
+        config.actions.filter {
+            $0.group == .fileOperations || [.cut, .paste, .moveToDirectory, .copyToDirectory].contains($0.kind)
+        }.count
     }
 
     var rootMenuActionCount: Int {
@@ -370,7 +385,9 @@ final class SettingsViewModel: NSObject, ObservableObject {
         switch section {
         case .directories: count = bookmarks.bookmarks.count
         case .actions: count = enabledActionCount
+        case .history: count = fileOperationActionCount
         case .templates: count = config.fileTemplates.count
+        case .commands: count = config.commandTemplates.count
         case .developer: count = config.developerEntrypoints.count
         default: return nil
         }
@@ -386,7 +403,7 @@ final class SettingsViewModel: NSObject, ObservableObject {
         var sections: [Section] {
             switch self {
             case .guided: return [.onboarding]
-            case .editing: return [.actions, .directories, .developer, .history, .templates]
+            case .editing: return [.actions, .directories, .developer, .commands, .history, .templates]
             }
         }
     }
@@ -395,8 +412,12 @@ final class SettingsViewModel: NSObject, ObservableObject {
         do {
             let result = try ConfigurationBootstrapper().bootstrap(paths: paths)
             apply(result: result)
+            syncAllCommandTemplateActions()
 
-            if normalizeDeveloperEntrypointIdentifiers() {
+            var needsPersist = normalizeDeveloperEntrypointIdentifiers()
+            // AirDrop 菜单项补齐并同步默认名称、顺序与禁用状态。
+            needsPersist = normalizeAirDropAction() || needsPersist
+            if needsPersist {
                 try persistConfiguration(config, bookmarks: bookmarks)
             }
 
@@ -428,6 +449,7 @@ final class SettingsViewModel: NSObject, ObservableObject {
 
     func saveConfig() {
         do {
+            syncAllCommandTemplateActions()
             try validateConfig()
             try persistConfiguration(config, bookmarks: bookmarks)
             hasUnsavedChanges = false
@@ -969,6 +991,60 @@ final class SettingsViewModel: NSObject, ObservableObject {
         markUnsaved("模板顺序已更新")
     }
 
+    func upsertCommandTemplate(_ template: CommandTemplate, replacing originalID: String?) {
+        if let originalID, let index = config.commandTemplates.firstIndex(where: { $0.id == originalID }) {
+            config.commandTemplates[index] = template
+            updateCommandTemplateBackReferences(from: originalID, to: template.id)
+        } else {
+            config.commandTemplates.append(template)
+        }
+        syncCommandTemplateAction(for: template, originalID: originalID)
+        markUnsaved()
+    }
+
+    func deleteCommandTemplate(_ template: CommandTemplate) {
+        config.commandTemplates.removeAll { $0.id == template.id }
+        config.actions.removeAll { action in
+            action.kind == .runCommand && action.payload.commandTemplateID == template.id
+        }
+        markUnsaved("命令模板已删除，关联动作已移除")
+    }
+
+    func requestAddCommandTemplate() {
+        commandTemplateAddRequest += 1
+    }
+
+    func reorderCommandTemplates(_ orderedIDs: [String], moving sourceID: String, targetID: String, placeAfter: Bool) {
+        guard
+            sourceID != targetID,
+            orderedIDs.contains(sourceID),
+            orderedIDs.contains(targetID)
+        else {
+            return
+        }
+
+        var ids = orderedIDs
+        ids.removeAll { $0 == sourceID }
+        guard let targetIndex = ids.firstIndex(of: targetID) else {
+            return
+        }
+        ids.insert(sourceID, at: min(placeAfter ? targetIndex + 1 : targetIndex, ids.count))
+
+        guard ids != orderedIDs else {
+            return
+        }
+
+        let byID = Dictionary(uniqueKeysWithValues: config.commandTemplates.map { ($0.id, $0) })
+        let reordered = ids.compactMap { byID[$0] }
+        guard reordered.count == config.commandTemplates.count else {
+            return
+        }
+
+        config.commandTemplates = reordered
+        normalizeCommandTemplateActionOrder()
+        markUnsaved("命令模板顺序已更新")
+    }
+
     func upsertDeveloperEntrypoint(_ entrypoint: DeveloperEntrypoint, replacing originalID: String?) {
         if let duplicate = duplicateDeveloperEntrypoint(bundleIdentifier: entrypoint.bundleIdentifier, excluding: originalID) {
             setStatus("应用已存在：\(duplicate.title)", tone: .warning)
@@ -1387,6 +1463,15 @@ final class SettingsViewModel: NSObject, ObservableObject {
         }
     }
 
+    private func updateCommandTemplateBackReferences(from oldID: String, to newID: String) {
+        guard oldID != newID else {
+            return
+        }
+        for index in config.actions.indices where config.actions[index].payload.commandTemplateID == oldID {
+            config.actions[index].payload.commandTemplateID = newID
+        }
+    }
+
     private func updateDeveloperBackReferences(from oldID: String, to newID: String) {
         guard oldID != newID else {
             return
@@ -1437,6 +1522,97 @@ final class SettingsViewModel: NSObject, ObservableObject {
                 continue
             }
             config.actions[actionIndex].order = baseOrder + index * 10
+        }
+    }
+
+    /// AirDrop 菜单项：缺失时补齐，并把旧配置里的名称、顺序与启用状态同步到最新默认值。
+    @discardableResult
+    private func normalizeAirDropAction() -> Bool {
+        let deleteOrder = config.actions.first(where: { $0.kind == .deletePermanently })?.order
+
+        if let index = config.actions.firstIndex(where: { $0.kind == .airDrop }) {
+            var changed = false
+            if config.actions[index].title == "通过 AirDrop 发送" {
+                config.actions[index].title = "AirDrop 发送"
+                changed = true
+            }
+            if config.actions[index].isEnabled {
+                config.actions[index].isEnabled = false
+                changed = true
+            }
+            if let deleteOrder, config.actions[index].order <= deleteOrder {
+                config.actions[index].order = deleteOrder + 1
+                changed = true
+            }
+            return changed
+        }
+
+        config.actions.append(
+            RightClickAction(
+                id: uniqueActionID(base: "airdrop-share"),
+                title: "AirDrop 发送",
+                kind: .airDrop,
+                visibility: [.selection],
+                placement: .submenu,
+                group: .fileOperations,
+                isEnabled: false,
+                order: deleteOrder.map { $0 + 1 } ?? nextActionOrder
+            )
+        )
+        return true
+    }
+
+    private func normalizeCommandTemplateActionOrder() {
+        let baseOrder = config.actions
+            .filter { $0.kind == .runCommand }
+            .map(\.order)
+            .min() ?? nextActionOrder
+
+        for (index, template) in config.commandTemplates.enumerated() {
+            guard let actionIndex = config.actions.firstIndex(where: {
+                $0.kind == .runCommand && $0.payload.commandTemplateID == template.id
+            }) else {
+                continue
+            }
+            config.actions[actionIndex].order = baseOrder + index * 10
+        }
+    }
+
+    private func syncCommandTemplateAction(for template: CommandTemplate, originalID: String?) {
+        if let index = config.actions.firstIndex(where: { action in
+            action.kind == .runCommand && (
+                action.payload.commandTemplateID == template.id ||
+                    action.payload.commandTemplateID == originalID
+            )
+        }) {
+            config.actions[index].title = template.title
+            config.actions[index].payload.commandTemplateID = template.id
+            return
+        }
+
+        config.actions.append(
+            RightClickAction(
+                id: uniqueActionID(base: "run-\(template.id)"),
+                title: template.title,
+                kind: .runCommand,
+                visibility: [.selection, .container],
+                placement: .submenu,
+                group: .commandTemplates,
+                order: nextActionOrder,
+                payload: ActionPayload(commandTemplateID: template.id)
+            )
+        )
+    }
+
+    /// 确保每个命令模板都有对应的菜单动作，并清理已删除模板遗留的动作。
+    private func syncAllCommandTemplateActions() {
+        for template in config.commandTemplates {
+            syncCommandTemplateAction(for: template, originalID: nil)
+        }
+
+        let templateIDs = Set(config.commandTemplates.map(\.id))
+        config.actions.removeAll { action in
+            action.kind == .runCommand && !(action.payload.commandTemplateID.map(templateIDs.contains) ?? false)
         }
     }
 
@@ -1849,6 +2025,22 @@ final class SettingsViewModel: NSObject, ObservableObject {
             }
         }
 
+        var commandIDs = Set<String>()
+        for template in config.commandTemplates {
+            guard !template.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw SettingsValidationError.emptyTemplateID
+            }
+            guard commandIDs.insert(template.id).inserted else {
+                throw SettingsValidationError.duplicateID(template.id)
+            }
+            guard !template.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw SettingsValidationError.emptyTemplateTitle
+            }
+            guard !template.command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw SettingsValidationError.emptyCommand
+            }
+        }
+
         var developerIDs = Set<String>()
         for entrypoint in config.developerEntrypoints {
             guard !entrypoint.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -1894,6 +2086,7 @@ enum SettingsValidationError: Error, LocalizedError {
     case emptyTemplateID
     case emptyTemplateTitle
     case invalidFileName(String)
+    case emptyCommand
     case emptyDeveloperID
     case emptyDeveloperTitle
     case emptyBundleIdentifier
@@ -1909,6 +2102,8 @@ enum SettingsValidationError: Error, LocalizedError {
             return "模板名称不能为空"
         case .invalidFileName(let name):
             return "默认文件名无效：\(name)"
+        case .emptyCommand:
+            return "命令不能为空"
         case .emptyDeveloperID:
             return "开发者入口 ID 不能为空"
         case .emptyDeveloperTitle:

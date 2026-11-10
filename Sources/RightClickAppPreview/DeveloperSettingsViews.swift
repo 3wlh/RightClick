@@ -156,7 +156,6 @@ struct DeveloperTableHeader: View {
                 .frame(width: 18, alignment: .center)
             Text("名称").frame(width: 200, alignment: .leading)
             Text("目标方式").frame(maxWidth: .infinity, alignment: .leading)
-            Text("快捷键").frame(width: 64, alignment: .leading)
             Text("启用").frame(width: 60, alignment: .center)
             Text("操作").frame(width: 76, alignment: .center)
         }
@@ -204,12 +203,6 @@ struct DeveloperTableRow: View {
                 .truncationMode(.tail)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
-
-            Text(developerEntryHotkey(for: entrypoint))
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(SettingsTheme.muted)
-                .lineLimit(1)
-                .frame(width: 64, alignment: .leading)
 
             Toggle("", isOn: Binding(
                 get: { matchingAction?.isEnabled ?? false },
@@ -321,20 +314,6 @@ private func developerEntryTint(for entrypoint: DeveloperEntrypoint) -> Color {
     if value.contains("postman") { return .orange }
     if value.contains("folder") || value.contains("目录") { return .blue }
     return SettingsTheme.accent
-}
-
-private func developerEntryHotkey(for entrypoint: DeveloperEntrypoint) -> String {
-    let value = "\(entrypoint.title) \(entrypoint.bundleIdentifier)".lowercased()
-    if value.contains("vscode") || value.contains("visual studio") { return "⌥⌘ V" }
-    if value.contains("cursor") { return "⌥⌘ C" }
-    if value.contains("webstorm") { return "⌥⌘ W" }
-    if value.contains("terminal") || value.contains("iterm") { return "⌥⌘ T" }
-    if value.contains("github") { return "⌥⌘ G" }
-    if value.contains("docker") { return "⌥⌘ D" }
-    if value.contains("postman") { return "⌥⌘ P" }
-    if value.contains("logs") { return "⌥⌘ L" }
-    if value.contains("config") { return "⌥⌘ E" }
-    return "⌥⌘ \(entrypoint.title.prefix(1).uppercased())"
 }
 
 extension DeveloperEntrypoint {

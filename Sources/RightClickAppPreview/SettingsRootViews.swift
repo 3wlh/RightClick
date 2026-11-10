@@ -28,6 +28,8 @@ struct SettingsRootView: View {
                     ActionListView(viewModel: viewModel)
                 case .templates:
                     TemplateListView(viewModel: viewModel)
+                case .commands:
+                    CommandListView(viewModel: viewModel)
                 case .developer:
                     DeveloperEntrypointListView(viewModel: viewModel)
                 case .history:
@@ -156,8 +158,6 @@ enum SettingsTheme {
         light: NSColor(calibratedWhite: 0.0, alpha: 0.16),
         dark: NSColor(calibratedWhite: 0.0, alpha: 0.45)
     )
-    static let commandOutputText = ink
-    static let commandOutputBackground = color(0xF5F5F5, dark: 0x1A1A1A)
 
     static var menuBackground: LinearGradient {
         LinearGradient(
@@ -450,6 +450,13 @@ struct SettingsDetailShell<Content: View>: View {
                 headerStatusCluster
                 HeaderActionButton(title: "添加模板") {
                     viewModel.requestAddTemplate()
+                }
+            }
+        case .commands:
+            HStack(spacing: 12) {
+                headerStatusCluster
+                HeaderActionButton(title: "添加模板") {
+                    viewModel.requestAddCommandTemplate()
                 }
             }
         case .actions:

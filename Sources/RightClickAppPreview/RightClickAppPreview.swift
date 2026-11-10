@@ -130,6 +130,21 @@ final class RightClickAppDelegate: NSObject, NSApplicationDelegate {
         quickMenuController.syncVisibility()
     }
 
+    // Finder 扩展通过 rightclick://run-command 唤起 App 执行命令，
+    // 沙盒扩展无法发送携带 userInfo 的分布式通知，URL Scheme 是可靠的替代通道。
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls {
+            if let shareRequest = AirDropShareURL.request(from: url) {
+                AirDropShareController.shared.share(paths: shareRequest.paths)
+                continue
+            }
+            guard let request = CommandRunURL.request(from: url) else {
+                continue
+            }
+            CommandRunController.shared.execute(request: request)
+        }
+    }
+
     private func applyApplicationMenuTitle() {
         NSApplication.shared.mainMenu?.items.first?.title = AppMetadata.displayName
     }

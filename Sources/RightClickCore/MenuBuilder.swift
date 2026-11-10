@@ -80,6 +80,18 @@ public enum MenuIconResolver {
             return .systemSymbol("trash.slash")
         case .undoOperation:
             return .systemSymbol("arrow.uturn.backward")
+        case .airDrop:
+            return .systemSymbol("square.and.arrow.up")
+        case .runCommand:
+            if
+                let templateID = action.payload.commandTemplateID,
+                let template = config.commandTemplates.first(where: { $0.id == templateID }),
+                let iconSymbol = template.iconSymbol,
+                !iconSymbol.isEmpty
+            {
+                return .systemSymbol(iconSymbol)
+            }
+            return .systemSymbol("terminal")
         }
     }
 }

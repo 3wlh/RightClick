@@ -92,7 +92,7 @@ public final class ActionRunner {
                 throw ActionRunnerError.missingPayload("directoryID")
             }
             return [directoryID]
-        case .cut, .paste, .createFile, .openInApp, .copyPath, .hideItems, .unhideItems, .deletePermanently, .undoOperation:
+        case .cut, .paste, .createFile, .openInApp, .copyPath, .hideItems, .unhideItems, .deletePermanently, .undoOperation, .airDrop, .runCommand:
             return []
         }
     }
@@ -206,6 +206,14 @@ public final class ActionRunner {
             )
 
         case .undoOperation:
+            throw ActionRunnerError.unsupportedAction(action.kind)
+
+        case .runCommand:
+            // 命令需要实时输出，由主 App 进程负责执行，XPC 服务不再处理。
+            throw ActionRunnerError.unsupportedAction(action.kind)
+
+        case .airDrop:
+            // AirDrop 分享面板需要前台 App 展示，由主 App 进程处理。
             throw ActionRunnerError.unsupportedAction(action.kind)
         }
     }

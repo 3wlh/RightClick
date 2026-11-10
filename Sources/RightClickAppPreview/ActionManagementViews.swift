@@ -8,6 +8,7 @@ enum ActionManagementFilter: String, CaseIterable, Identifiable {
     case create = "新建"
     case operations = "操作"
     case tools = "应用"
+    case commands = "命令"
 
     var id: String { rawValue }
 
@@ -26,6 +27,8 @@ enum ActionManagementFilter: String, CaseIterable, Identifiable {
             ].contains(action.group)
         case .tools:
             return action.group == .developerEntrypoints || action.kind == .openInApp
+        case .commands:
+            return action.kind == .runCommand || action.group == .commandTemplates
         }
     }
 }
