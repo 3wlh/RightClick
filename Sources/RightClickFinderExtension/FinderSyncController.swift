@@ -1,6 +1,5 @@
 #if canImport(FinderSync) && canImport(AppKit)
 import AppKit
-import CryptoKit
 import FinderSync
 import RightClickCore
 import UniformTypeIdentifiers
@@ -16,18 +15,15 @@ final class FinderSyncController: FIFinderSync, @unchecked Sendable {
     private let configProvider: RightClickConfigProviding
     private let xpcClient = RightClickActionRunnerXPCClient()
     private let cacheRefreshQueue = DispatchQueue(label: "com.local.rightclick.finder-extension.cache")
-    private let iconResolutionQueue = DispatchQueue(label: "com.local.rightclick.finder-extension.icons", qos: .background)
+    private let iconResolutionQueue = DispatchQueue(label: "com.local.rightclick.finder-extension.icons", qos: .background, attributes: .concurrent)
     private let cacheRefreshInterval: TimeInterval = 8
-    private let startupConfigLoadDelay: TimeInterval = 0.6
     private let postMenuRefreshDelay: TimeInterval = 1.0
     private let backgroundRepairDelay: TimeInterval = 8
-    private let persistedIconCacheLoadDelay: TimeInterval = 1.2
     private let iconPrewarmIdleDelay: TimeInterval = 3
     private let iconPrewarmStepDelay: TimeInterval = 0.35
     private let slowMenuLogThreshold: TimeInterval = 0.2
     private let menuIconSize = NSSize(width: 16, height: 16)
     private let menuIconBackingScale: CGFloat = 2
-    private let persistedIconCacheVersion = "v1"
     private var cachedConfig = RightClickConfig(actions: [])
     private var cachedBookmarks = DirectoryBookmarkCatalog()
     private var hasLoadedConfiguration = false
@@ -153,7 +149,7 @@ final class FinderSyncController: FIFinderSync, @unchecked Sendable {
     }
 
     private func loadConfigurationForStartupInBackground() {
-        cacheRefreshQueue.asyncAfter(deadline: .now() + startupConfigLoadDelay) { [weak self] in
+        cacheRefreshQueue.async { [weak self] in
             guard let self else { return }
             do {
                 let config = try self.configProvider.loadConfig()
@@ -248,7 +244,7 @@ final class FinderSyncController: FIFinderSync, @unchecked Sendable {
         cachedBookmarks = bookmarks
         hasLoadedConfiguration = true
         lastCacheRefresh = Date()
-        loadPersistedIconCacheInBackground(config: config, bookmarks: bookmarks)
+        resolveStartupIconsIfNeeded(config: config, bookmarks: bookmarks)
     }
 
     private func scheduleConfigurationRefreshAfterMenu() {
@@ -306,47 +302,36 @@ final class FinderSyncController: FIFinderSync, @unchecked Sendable {
         }
     }
 
-    private func loadPersistedIconCacheInBackground(
+    // 启动/配置变更后立即根据当前配置并发解析真实图标并缓存到内存，
+    // 让开机后的第一次右键就能拿到完整图标。纯内存缓存，进程退出即失效，
+    // 因此每次启动天然读到最新图标（App 更新换图标后无需任何失效机制）。
+    private func resolveStartupIconsIfNeeded(
         config: RightClickConfig,
         bookmarks: DirectoryBookmarkCatalog
     ) {
         let icons = config.actions
             .filter(\.isEnabled)
             .map { MenuIconResolver.icon(for: $0, config: config, bookmarks: bookmarks) }
-
-        var cacheKeys = Set<String>()
-        let iconKeys = icons
             .filter(\.requiresExternalResourceLookup)
-            .map { cacheKey(for: $0) }
-            .filter { cacheKeys.insert($0).inserted }
 
-        guard !iconKeys.isEmpty else {
-            return
-        }
-
-        iconResolutionQueue.asyncAfter(deadline: .now() + persistedIconCacheLoadDelay) { [weak self] in
-            guard let self else {
-                return
+        for icon in icons {
+            let key = cacheKey(for: icon)
+            guard iconCache[key] == nil, pendingIconResolutionKeys.insert(key).inserted else {
+                continue
             }
 
-            let loadedImages: [(key: String, image: NSImage)] = iconKeys.compactMap { key in
-                guard let image = autoreleasepool(invoking: { self.persistedPreparedMenuIcon(forKey: key) }) else {
-                    return nil
-                }
-                return (key, image)
-            }
-
-            guard !loadedImages.isEmpty else {
-                return
-            }
-
-            DispatchQueue.main.async { [weak self] in
-                guard let self else {
-                    return
+            iconResolutionQueue.async { [weak self] in
+                guard let self else { return }
+                let image = autoreleasepool {
+                    self.resolvedImage(for: icon).flatMap { self.preparedMenuImage(from: $0) }
                 }
 
-                for loadedImage in loadedImages where self.iconCache[loadedImage.key] == nil {
-                    self.cachePreparedMenuIcon(loadedImage.image, forKey: loadedImage.key)
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    if self.iconCache[key] == nil, let image {
+                        self.cachePreparedMenuIcon(image, forKey: key)
+                    }
+                    self.pendingIconResolutionKeys.remove(key)
                 }
             }
         }
@@ -516,7 +501,8 @@ final class FinderSyncController: FIFinderSync, @unchecked Sendable {
             return nil
         }
 
-        // 菜单回调只走缓存/占位图标，真实 app/file 图标交给空闲后的后台队列解析。
+        // 菜单回调只走缓存/占位图标；启动时已按配置并发预热真实图标，
+        // 未就绪的交给后台队列解析，避免阻塞菜单弹出。
         let key = cacheKey(for: icon)
         if let cached = iconCache[key] {
             return cached
@@ -573,18 +559,12 @@ final class FinderSyncController: FIFinderSync, @unchecked Sendable {
             }
 
             let image: NSImage? = autoreleasepool {
-                if let persistedImage = self.persistedPreparedMenuIcon(forKey: request.key) {
-                    return persistedImage
-                }
-
                 guard
                     let resolvedImage = self.resolvedImage(for: request.icon),
                     let preparedImage = self.preparedMenuImage(from: resolvedImage)
                 else {
                     return nil
                 }
-
-                self.persistPreparedMenuIcon(preparedImage, forKey: request.key)
                 return preparedImage
             }
 
@@ -694,57 +674,6 @@ final class FinderSyncController: FIFinderSync, @unchecked Sendable {
         let menuImage = NSImage(size: menuIconSize)
         menuImage.addRepresentation(representation)
         return menuImage
-    }
-
-    private func persistedPreparedMenuIcon(forKey key: String) -> NSImage? {
-        let url = persistedIconCacheURL(forKey: key)
-        guard
-            let image = NSImage(contentsOf: url),
-            let preparedImage = preparedMenuImage(from: image)
-        else {
-            return nil
-        }
-        return preparedImage
-    }
-
-    private func persistPreparedMenuIcon(_ image: NSImage, forKey key: String) {
-        guard let pngData = pngData(forPreparedMenuImage: image) else {
-            return
-        }
-
-        let url = persistedIconCacheURL(forKey: key)
-        do {
-            try FileManager.default.createDirectory(
-                at: url.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            try pngData.write(to: url, options: [.atomic])
-        } catch {
-            NSLog("RightClick icon cache write failed: \(error.localizedDescription)")
-        }
-    }
-
-    private func pngData(forPreparedMenuImage image: NSImage) -> Data? {
-        guard
-            let tiffData = image.tiffRepresentation,
-            let bitmap = NSBitmapImageRep(data: tiffData)
-        else {
-            return nil
-        }
-        return bitmap.representation(using: .png, properties: [:])
-    }
-
-    private func persistedIconCacheURL(forKey key: String) -> URL {
-        paths.baseURL
-            .appendingPathComponent("icon-cache", isDirectory: true)
-            .appendingPathComponent(persistedIconCacheVersion, isDirectory: true)
-            .appendingPathComponent("\(persistedIconCacheFileName(forKey: key)).png")
-    }
-
-    private func persistedIconCacheFileName(forKey key: String) -> String {
-        let digest = SHA256.hash(data: Data(key.utf8))
-        // 取前 8 字节（16 位十六进制），几百个图标键的碰撞概率可忽略。
-        return digest.prefix(8).map { String(format: "%02x", $0) }.joined()
     }
 
     private func cachePreparedMenuIcon(_ image: NSImage, forKey key: String) {

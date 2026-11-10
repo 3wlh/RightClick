@@ -12,9 +12,7 @@ baseURL/
 ├── bookmarks.json
 ├── cut-clipboard.json
 ├── operation-log.jsonl
-├── command-runs/
-└── icon-cache/
-    └── v1/
+└── command-runs/
 ```
 
 Reference files: `Sources/RightClickCore/Storage.swift`, `OperationLogStore.swift`, `CutClipboardStore.swift`.
@@ -38,13 +36,15 @@ Reference tests: `Tests/RightClickCoreTests/StorageTests.swift`.
 
 ## Finder Icon Cache
 
-Finder menu icon cache files live under `icon-cache/v1/` as small PNG files
-generated from already-rasterized menu images.
+Menu icons use an in-memory-only cache (`FinderSyncController.iconCache`).
 
-- Finder menu callbacks must not read or write this directory.
-- Disk reads and writes must happen asynchronously on a background queue.
-- Cache keys should be hashed into filenames; do not use raw app bundle IDs or file paths as filenames.
-- The disk cache is best-effort. Read/write failures should keep placeholder icons available and must not crash Finder.
+- On startup and after every configuration change, the extension resolves
+  real app/file icons for all enabled actions concurrently on the low-priority
+  icon queue and stores rasterized menu-ready images in memory only.
+- There is no persisted icon cache; do not reintroduce disk-backed icon
+  caching without an invalidation story (stale icons outlive app updates).
+- Menu callbacks must never resolve icons synchronously; if a key is not
+  cached yet, render the placeholder and schedule async resolution.
 
 ## App Group and Fallback Rules
 

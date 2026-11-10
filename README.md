@@ -244,12 +244,10 @@ Finder
 
 ```text
 ~/Library/Application Support/com.local.rightclick
-├── rightclick.json        # 配置 + 常用目录书签（唯一配置文件）
-└── icon-cache/
-    └── v1/
+└── rightclick.json        # 配置 + 常用目录书签（唯一配置文件）
 ```
 
-剪切状态保存在 ActionRunner 进程内存中，不再生成额外文件。
+剪切状态保存在 ActionRunner 进程内存中，右键菜单图标缓存在 Finder 扩展进程内存中（启动时按配置解析并预热），均不再生成额外文件。
 
 旧版本遗留的 `config.json` 和 `bookmarks.json` 会在启动时自动合并进 `rightclick.json` 并删除。
 

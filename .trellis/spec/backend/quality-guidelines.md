@@ -459,8 +459,8 @@ try fileManager.removeItem(at: url)
 - `menu(for:)` must build from cached config/bookmarks and return quickly; it must not perform storage bootstrap, shell commands, XPC calls, or file mutations.
 - Menu callbacks may synchronously render only already-cached real icons or SF Symbol placeholders; they must not call `NSWorkspace` icon APIs on cache misses.
 - App bundle and file path icons require external resource lookup. The menu callback must not synchronously call `NSWorkspace.urlForApplication(withBundleIdentifier:)` or `NSWorkspace.shared.icon(forFile:)` for cache misses, and must not start that work immediately from inside the callback.
-- Real app and file-path icons should be resolved on a low-priority background icon queue after a short no-menu idle window, rasterized into small menu-ready bitmap images, cached in memory by descriptor key, persisted as small PNGs under `icon-cache/v1`, and reused by later right-clicks.
-- Persisted icon cache reads must also be asynchronous. `menu(for:)` may consult only the in-memory icon cache and placeholder cache.
+- Real app and file-path icons should be resolved at startup and after every config change, concurrently on a low-priority background icon queue, rasterized into small menu-ready bitmap images, and cached in memory by descriptor key only.
+- There is no persisted icon cache. Never reintroduce disk-backed icon caching without an invalidation story; menu callbacks may consult only the in-memory icon cache and placeholder cache.
 - Do not cache raw `NSWorkspace` icon `NSImage` objects for menus; they may lazily decode or draw ICNS/PDF representations on the later menu open that first displays them.
 - New menu requests should cancel queued-but-not-running icon prewarm work so Finder is not competing with stale icon lookups.
 - App bundle icon cache misses must show the generic default app icon immediately.
