@@ -600,8 +600,8 @@ struct SaveConfigButton: View {
         Button {
             viewModel.saveConfig()
         } label: {
-            Label("保存配置", systemImage: "square.and.arrow.down")
-                .labelStyle(.iconOnly)
+            Label("保存配置", systemImage: "checkmark.circle")
+                .labelStyle(.titleAndIcon)
         }
         .buttonStyle(SettingsButtonStyle(isPrimary: true))
         .accessibilityLabel("保存配置")

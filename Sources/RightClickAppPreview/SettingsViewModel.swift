@@ -1138,7 +1138,8 @@ final class SettingsViewModel: NSObject, ObservableObject {
         bookmarks.bookmarks = reordered
         reorderDirectoryIDReferences()
         normalizeDirectoryActionOrder()
-        saveDirectoryChanges("目录顺序已更新")
+        // 与其他页面的排序行为保持一致：仅标记未保存，由用户显式保存。
+        markUnsaved("目录顺序已更新")
     }
 
     func isDirectoryBookmarkEnabled(_ bookmarkID: String) -> Bool {

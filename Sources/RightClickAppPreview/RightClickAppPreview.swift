@@ -93,10 +93,20 @@ final class RightClickAppDelegate: NSObject, NSApplicationDelegate {
         )
         quickMenuController.syncVisibility()
 
-        // 隐藏菜单栏快捷菜单时，从启动台/登录项首次拉起 App 直接进入设置窗口。
-        if !MenuBarQuickMenuPreference.isEnabled {
+        // 隐藏菜单栏快捷菜单时，从启动台首次拉起 App 直接进入设置窗口；
+        // 开机登录项自启（由 loginwindow 拉起）时不弹窗，保持静默后台运行。
+        if !MenuBarQuickMenuPreference.isEnabled && !isLaunchedByLoginItem {
             SettingsWindowController.shared.showSettings()
         }
+    }
+
+    // ：通过当前启动 AppleEvent 的发送方区分启动来源
+    // 登录项自启的发送方是 loginwindow，启动台/手动打开则是 Launchpad、Finder 等。
+    private var isLaunchedByLoginItem: Bool {
+        guard let event = NSAppleEventManager.shared().currentAppleEvent,
+              let senderPID = event.attributeDescriptor(forKeyword: AEKeyword(keySenderPIDAttr))?.int32Value
+        else { return false }
+        return NSRunningApplication(processIdentifier: senderPID)?.bundleIdentifier == "com.apple.loginwindow"
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
