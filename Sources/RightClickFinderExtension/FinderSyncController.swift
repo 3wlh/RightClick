@@ -19,8 +19,7 @@ final class FinderSyncController: FIFinderSync, @unchecked Sendable {
     private let cacheRefreshInterval: TimeInterval = 8
     private let postMenuRefreshDelay: TimeInterval = 1.0
     private let backgroundRepairDelay: TimeInterval = 8
-    private let iconPrewarmIdleDelay: TimeInterval = 3
-    private let iconPrewarmStepDelay: TimeInterval = 0.35
+    private let deferredIconStepDelay: TimeInterval = 0.35
     private let slowMenuLogThreshold: TimeInterval = 0.2
     private let menuIconSize = NSSize(width: 16, height: 16)
     private let menuIconBackingScale: CGFloat = 2
@@ -35,7 +34,6 @@ final class FinderSyncController: FIFinderSync, @unchecked Sendable {
     private var pendingIconResolutionKeys: Set<String> = []
     private var deferredIconRequests: [DeferredIconRequest] = []
     private var isResolvingDeferredIcon = false
-    private var iconPrewarmGeneration = 0
     private var configRefreshGeneration = 0
     private var pendingMenuActions: [Int: PendingMenuAction] = [:]
     private var nextMenuActionTag = 1
@@ -79,7 +77,6 @@ final class FinderSyncController: FIFinderSync, @unchecked Sendable {
     }
 
     override func menu(for menuKind: FIMenuKind) -> NSMenu? {
-        cancelIconPrewarmingForMenuRequest()
         cancelConfigurationRefreshForMenuRequest()
         let menuStart = Date()
         let context = finderContext(menuKind: menuKind)
@@ -141,7 +138,6 @@ final class FinderSyncController: FIFinderSync, @unchecked Sendable {
             menu.addItem(groupItem)
         }
 
-        scheduleIconPrewarming(for: presentation)
         scheduleConfigurationRefreshAfterMenu()
         logSlowMenuIfNeeded(startedAt: menuStart, itemCount: menu.items.count)
 
@@ -262,44 +258,6 @@ final class FinderSyncController: FIFinderSync, @unchecked Sendable {
 
     private func cancelConfigurationRefreshForMenuRequest() {
         configRefreshGeneration += 1
-    }
-
-    private func scheduleIconPrewarming(for presentation: MenuPresentation) {
-        iconPrewarmGeneration += 1
-        let generation = iconPrewarmGeneration
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + iconPrewarmIdleDelay) { [weak self] in
-            guard let self else { return }
-            guard generation == self.iconPrewarmGeneration else {
-                return
-            }
-            self.enqueueIconsForPrewarming(presentation)
-        }
-    }
-
-    private func cancelIconPrewarmingForMenuRequest() {
-        iconPrewarmGeneration += 1
-        let queuedKeys = deferredIconRequests.map(\.key)
-        deferredIconRequests.removeAll()
-        pendingIconResolutionKeys.subtract(queuedKeys)
-    }
-
-    private func enqueueIconsForPrewarming(_ presentation: MenuPresentation) {
-        var descriptors = Set<String>()
-        let icons = presentation.rootItems.compactMap(\.icon)
-            + presentation.groupedSubmenuItems.values.flatMap { $0.compactMap(\.icon) }
-            + MenuGroup.allCases.map { icon(for: $0) }
-
-        for icon in icons {
-            guard icon.requiresExternalResourceLookup else {
-                continue
-            }
-            let key = cacheKey(for: icon)
-            guard descriptors.insert(key).inserted else {
-                continue
-            }
-            scheduleDeferredIconResolution(icon, cacheKey: key)
-        }
     }
 
     // 启动/配置变更后立即根据当前配置并发解析真实图标并缓存到内存，
@@ -553,7 +511,7 @@ final class FinderSyncController: FIFinderSync, @unchecked Sendable {
         isResolvingDeferredIcon = true
         let request = deferredIconRequests.removeFirst()
 
-        iconResolutionQueue.asyncAfter(deadline: .now() + iconPrewarmStepDelay) { [weak self] in
+        iconResolutionQueue.asyncAfter(deadline: .now() + deferredIconStepDelay) { [weak self] in
             guard let self else {
                 return
             }

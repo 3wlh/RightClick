@@ -1106,7 +1106,7 @@ final class SettingsViewModel: NSObject, ObservableObject {
             directoryActionKinds.contains(action.kind) && action.payload.directoryID == bookmarkID
         }
 
-        saveDirectoryChanges("已删除目录：\(bookmark.displayName)")
+        markUnsaved("已删除目录：\(bookmark.displayName)")
     }
 
     func reorderDirectoryBookmarks(_ orderedIDs: [String], moving sourceID: String, targetID: String, placeAfter: Bool) {
@@ -1167,7 +1167,7 @@ final class SettingsViewModel: NSObject, ObservableObject {
             config.actions[index].isEnabled = isEnabled
         }
 
-        saveDirectoryChanges(isEnabled ? "已启用目录：\(bookmark.displayName)" : "已停用目录：\(bookmark.displayName)")
+        markUnsaved(isEnabled ? "已启用目录：\(bookmark.displayName)" : "已停用目录：\(bookmark.displayName)")
     }
 
     private func apply(result: ConfigurationBootstrapResult) {
@@ -1512,7 +1512,7 @@ final class SettingsViewModel: NSObject, ObservableObject {
             bookmarks.bookmarks[index] = updated
             appendUnique(bookmarkID, to: &config.shortcutDirectoryIDs)
             syncDirectoryActions(for: updated)
-            saveDirectoryChanges("已更新目录：\(displayName)")
+            markUnsaved("已更新目录：\(displayName)")
             return
         }
 
@@ -1525,7 +1525,7 @@ final class SettingsViewModel: NSObject, ObservableObject {
         bookmarks.bookmarks.append(bookmark)
         appendUnique(bookmark.id, to: &config.shortcutDirectoryIDs)
         syncDirectoryActions(for: bookmark)
-        saveDirectoryChanges("已添加目录：\(displayName)")
+        markUnsaved("已添加目录：\(displayName)")
     }
 
     private func syncDirectoryActions(for bookmark: DirectoryBookmark) {
@@ -1624,18 +1624,6 @@ final class SettingsViewModel: NSObject, ObservableObject {
             return nil
         }
         return data.base64EncodedString()
-    }
-
-    private func saveDirectoryChanges(_ message: String) {
-        do {
-            try validateConfig()
-            try persistConfiguration(config, bookmarks: bookmarks)
-            hasUnsavedChanges = false
-            setStatus(message, tone: .success)
-        } catch {
-            hasUnsavedChanges = true
-            setStatus("保存目录配置失败：\(error.localizedDescription)", tone: .error)
-        }
     }
 
     private func persistConfiguration(
