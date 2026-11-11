@@ -2024,7 +2024,7 @@ final class SettingsViewModel: NSObject, ObservableObject {
         return !trimmed.isEmpty && !trimmed.contains("/")
     }
 
-    private func markUnsaved(_ message: String = "有未保存的配置更改") {
+    func markUnsaved(_ message: String = "有未保存的配置更改") {
         let hasChanges = config != savedConfig || bookmarks != savedBookmarks
         hasUnsavedChanges = hasChanges
         if hasChanges {

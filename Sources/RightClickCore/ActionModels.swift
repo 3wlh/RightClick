@@ -470,6 +470,7 @@ public struct RightClickConfig: Codable, Equatable, Sendable {
     public var developerEntrypoints: [DeveloperEntrypoint]
     public var customGroups: [CustomMenuGroup]
     public var submenuGroupOrder: [String]
+    public var confirmBeforeDelete: Bool
 
     public init(
         schemaVersion: Int = RightClickConstants.currentSchemaVersion,
@@ -480,7 +481,8 @@ public struct RightClickConfig: Codable, Equatable, Sendable {
         commandTemplates: [CommandTemplate] = RightClickConfig.defaultCommandTemplates(),
         developerEntrypoints: [DeveloperEntrypoint] = RightClickConfig.defaultDeveloperEntrypoints(),
         customGroups: [CustomMenuGroup] = [],
-        submenuGroupOrder: [String] = MenuGroup.allCases.map(\.rawValue)
+        submenuGroupOrder: [String] = MenuGroup.allCases.map(\.rawValue),
+        confirmBeforeDelete: Bool = true
     ) {
         self.schemaVersion = schemaVersion
         self.maxRootMenuActions = maxRootMenuActions
@@ -491,6 +493,7 @@ public struct RightClickConfig: Codable, Equatable, Sendable {
         self.developerEntrypoints = developerEntrypoints
         self.customGroups = customGroups
         self.submenuGroupOrder = submenuGroupOrder
+        self.confirmBeforeDelete = confirmBeforeDelete
     }
 
     enum CodingKeys: String, CodingKey {
@@ -505,6 +508,7 @@ public struct RightClickConfig: Codable, Equatable, Sendable {
         case developerEntrypoints
         case customGroups
         case submenuGroupOrder
+        case confirmBeforeDelete
     }
 
     // 历史动作逐项解码，避免整个配置因为单个无法识别的动作而无法加载。
@@ -533,6 +537,7 @@ public struct RightClickConfig: Codable, Equatable, Sendable {
         self.developerEntrypoints = try container.decodeIfPresent([DeveloperEntrypoint].self, forKey: .developerEntrypoints) ?? RightClickConfig.defaultDeveloperEntrypoints()
         self.customGroups = try container.decodeIfPresent([CustomMenuGroup].self, forKey: .customGroups) ?? []
         self.submenuGroupOrder = try container.decodeIfPresent([String].self, forKey: .submenuGroupOrder) ?? MenuGroup.allCases.map(\.rawValue)
+        self.confirmBeforeDelete = try container.decodeIfPresent(Bool.self, forKey: .confirmBeforeDelete) ?? true
         if self.schemaVersion < RightClickConstants.currentSchemaVersion {
             self.schemaVersion = RightClickConstants.currentSchemaVersion
         }
@@ -549,6 +554,7 @@ public struct RightClickConfig: Codable, Equatable, Sendable {
         try container.encode(developerEntrypoints, forKey: .developerEntrypoints)
         try container.encode(customGroups, forKey: .customGroups)
         try container.encode(resolvedSubmenuOrder.map(\.rawValue), forKey: .submenuGroupOrder)
+        try container.encode(confirmBeforeDelete, forKey: .confirmBeforeDelete)
     }
 
     /// Finder 右键菜单中各分组子菜单的实际展示顺序，包含内置分组与自定义分组。

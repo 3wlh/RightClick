@@ -352,6 +352,12 @@ final class FinderSyncController: FIFinderSync, @unchecked Sendable {
             return
         }
 
+        // 开关关闭时静默删除，开启时才弹二次确认。
+        guard cachedConfig.confirmBeforeDelete else {
+            dispatchToActionRunner(request, actionKind: actionKind)
+            return
+        }
+
         // Finder Sync 的动作回调来自 XPC workloop，不是主线程；
         // 确认弹窗必须回到主队列执行，不能在这里同步等待。
         DispatchQueue.main.async { [weak self] in

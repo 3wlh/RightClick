@@ -179,23 +179,66 @@ struct FileOperationListRow: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(SettingsTheme.ink)
                     .lineLimit(1)
-                Text(action.placement.displayName)
-                    .font(.system(size: 11))
-                    .foregroundStyle(SettingsTheme.muted)
-                    .lineLimit(1)
+                subtitleLine
             }
 
             Spacer(minLength: 12)
 
-            Toggle("", isOn: Binding(
-                get: { action.isEnabled },
-                set: { viewModel.setActionEnabled($0, actionID: action.id) }
-            ))
-            .toggleStyle(.switch)
-            .labelsHidden()
+            if action.kind == .deletePermanently {
+                // 直接删除：二次确认开关（橙色，禁用时跟随启用开关）+ 启用开关。
+                HStack(spacing: 16) {
+                    // ⚠️ 二次确认 [橙色开关]
+                    HStack(spacing: 4) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.orange)
+                        Text("二次确认")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(action.isEnabled ? SettingsTheme.ink : SettingsTheme.muted)
+                        Toggle("", isOn: Binding(
+                            get: { viewModel.config.confirmBeforeDelete },
+                            set: { newValue in
+                                viewModel.config.confirmBeforeDelete = newValue
+                                viewModel.markUnsaved()
+                            }
+                        ))
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                        .tint(.orange)
+                        .frame(width: 44)
+                    }
+                    .disabled(!action.isEnabled)
+                    .help(action.isEnabled
+                          ? "删除前弹出二次确认；关闭则静默移除文件"
+                          : "菜单项未启用，二次确认暂不可用")
+
+                    // 菜单项启用开关。
+                    Toggle("", isOn: Binding(
+                        get: { action.isEnabled },
+                        set: { viewModel.setActionEnabled($0, actionID: action.id) }
+                    ))
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+                }
+            } else {
+                Toggle("", isOn: Binding(
+                    get: { action.isEnabled },
+                    set: { viewModel.setActionEnabled($0, actionID: action.id) }
+                ))
+                .toggleStyle(.switch)
+                .labelsHidden()
+            }
         }
         .padding(.horizontal, 14)
         .frame(height: 56)
+    }
+
+    @ViewBuilder
+    private var subtitleLine: some View {
+        Text(action.placement.displayName)
+            .font(.system(size: 11))
+            .foregroundStyle(SettingsTheme.muted)
+            .lineLimit(1)
     }
 }
 

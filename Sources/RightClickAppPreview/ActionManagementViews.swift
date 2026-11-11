@@ -316,9 +316,16 @@ struct ActionManagementTable: View {
                                         viewModel.moveAction(actionID: action.id, visibleActionIDs: visibleActionIDs, offset: 1)
                                     }
                                 )
-                                if rowIndex < section.rows.count - 1 {
+                                if rowIndex < section.rows.count - 1 || action.kind == .deletePermanently {
                                     Divider()
                                         .padding(.leading, 26)
+                                }
+
+                                // 在「直接删除」行下方嵌入全局确认开关。
+                                if action.kind == .deletePermanently {
+                                    ConfirmDeleteToggleRow(viewModel: viewModel)
+                                    Divider()
+                                        .padding(.leading, 18)
                                 }
                             }
 
@@ -697,6 +704,52 @@ struct ActionEditorRow: View {
         .frame(height: 56)
         .hoverRowBackground()
         .opacity(action.isEnabled ? 1 : 0.6)
+    }
+}
+
+struct ConfirmDeleteToggleRow: View {
+    @ObservedObject var viewModel: SettingsViewModel
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Spacer().frame(width: 88)
+
+            HStack(spacing: 10) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.orange)
+                    .frame(width: 22)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("删除前弹出确认")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(SettingsTheme.ink)
+                    Text("关闭后直接删除菜单项会静默移除文件，不进入废纸篓")
+                        .font(.system(size: 11))
+                        .foregroundStyle(SettingsTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .layoutPriority(1)
+
+            Spacer(minLength: 12)
+
+            Toggle(
+                "",
+                isOn: Binding(
+                    get: { viewModel.config.confirmBeforeDelete },
+                    set: { newValue in
+                        viewModel.config.confirmBeforeDelete = newValue
+                        viewModel.markUnsaved()
+                    }
+                )
+            )
+            .toggleStyle(.switch)
+            .labelsHidden()
+            .help("直接删除时是否弹出二次确认")
+        }
+        .padding(.horizontal, 18)
+        .frame(height: 44)
+        .background(Color.clear)
     }
 }
 
