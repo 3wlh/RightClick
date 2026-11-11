@@ -328,7 +328,7 @@ final class ConfigurationBootstrapperTests: XCTestCase {
         XCTAssertTrue(MenuGroup.allCases.contains(.developerTools))
     }
 
-    func testBootstrapMigratesLegacyCommandTemplateAndEditorEntrypoints() throws {
+    func testBootstrapKeepsCommandTemplateActionsAndMigratesEditorEntrypoints() throws {
         let baseDirectory = try temporaryDirectory()
         let paths = RightClickStoragePaths(baseURL: baseDirectory.appendingPathComponent("config"))
         let legacyJSON = """
@@ -387,7 +387,7 @@ final class ConfigurationBootstrapperTests: XCTestCase {
             }
           ],
           "commandTemplates": [
-            {"id": "command-custom", "title": "Custom Command", "command": "pwd", "workingDirectoryMode": "currentDirectory", "timeoutSeconds": 60, "environment": []}
+            {"id": "command-custom", "title": "Custom Command", "command": "pwd", "workingDirectory": "currentDirectory", "timeoutSeconds": 60, "environment": "", "runInTerminal": true}
           ]
         }
         """
@@ -396,7 +396,8 @@ final class ConfigurationBootstrapperTests: XCTestCase {
 
         let result = try ConfigurationBootstrapper().bootstrap(paths: paths)
 
-        XCTAssertFalse(result.config.actions.contains { $0.id == "run-command-custom" })
+        XCTAssertTrue(result.config.actions.contains { $0.id == "run-command-custom" })
+        XCTAssertTrue(result.config.commandTemplates.contains { $0.id == "command-custom" })
         XCTAssertTrue(result.config.actions.contains { $0.id == "copy-path" })
         XCTAssertFalse(result.config.developerEntrypoints.contains { $0.id == "developer-vscode" })
         XCTAssertFalse(result.config.actions.contains { $0.payload.developerEntrypointID == "developer-vscode" })

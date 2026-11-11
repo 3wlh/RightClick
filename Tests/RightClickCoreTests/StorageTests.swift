@@ -84,7 +84,7 @@ final class StorageTests: XCTestCase {
         XCTAssertTrue(config.developerEntrypoints.isEmpty)
     }
 
-    func testConfigSkipsRemovedCommandTemplateActionsWhenDecoding() throws {
+    func testConfigDecodesCommandTemplateActions() throws {
         let json = """
         {
           "schemaVersion": 2,
@@ -121,7 +121,7 @@ final class StorageTests: XCTestCase {
 
         let config = try JSONDecoder().decode(RightClickConfig.self, from: Data(json.utf8))
 
-        XCTAssertEqual(config.actions.map(\.id), ["copy-path"])
+        XCTAssertEqual(config.actions.map(\.id), ["run-legacy", "copy-path"])
     }
 
     func testConfigEncodesV3ShortcutDirectoriesOnly() throws {
@@ -134,7 +134,9 @@ final class StorageTests: XCTestCase {
         XCTAssertEqual(object["shortcutDirectoryIDs"] as? [String], ["desktop"])
         XCTAssertNil(object["monitoredDirectoryIDs"])
         XCTAssertNil(object["commonDirectoryIDs"])
-        XCTAssertNil(object["commandTemplates"])
+        // schema 8 起命令模板是正式字段，默认配置自带一个模板。
+        let templates = try XCTUnwrap(object["commandTemplates"] as? [[String: Any]])
+        XCTAssertEqual(templates.count, 1)
     }
 
     func testResolvedSubmenuGroupOrderKeepsValidOrderAndAppendsMissingGroups() {
