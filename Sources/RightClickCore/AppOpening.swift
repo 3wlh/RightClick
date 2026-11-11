@@ -276,6 +276,22 @@ import AppKit
 
 /// 按 bundleIdentifier 定位应用；系统解析不到时再在记录的应用目录里查找。
 public enum DeveloperAppLocator {
+    /// 解析优先级：完整应用路径 → bundleIdentifier → 应用目录兜底。
+    public static func applicationURL(for entrypoint: DeveloperEntrypoint) -> URL? {
+        if let path = entrypoint.applicationPath?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !path.isEmpty {
+            let expanded = (path as NSString).expandingTildeInPath
+            if FileManager.default.fileExists(atPath: expanded) {
+                return URL(fileURLWithPath: expanded)
+            }
+        }
+
+        return applicationURL(
+            for: entrypoint.bundleIdentifier,
+            directory: entrypoint.applicationDirectory
+        )
+    }
+
     public static func applicationURL(for bundleIdentifier: String, directory: String?) -> URL? {
         let normalized = bundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else {
@@ -314,7 +330,7 @@ public struct NSWorkspaceURLOpener: URLOpening, DeveloperAppOpening {
     }
 
     public func open(_ entrypoint: DeveloperEntrypoint, targetURL: URL) throws {
-        guard let appURL = DeveloperAppLocator.applicationURL(for: entrypoint.bundleIdentifier, directory: entrypoint.applicationDirectory) else {
+        guard let appURL = DeveloperAppLocator.applicationURL(for: entrypoint) else {
             throw AppOpeningError.cannotOpen(entrypoint.bundleIdentifier)
         }
 

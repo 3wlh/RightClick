@@ -75,6 +75,8 @@ struct OnboardingView: View {
                 LaunchAtLoginPanel(viewModel: viewModel)
                 Divider()
                 UpdateCheckPanel(viewModel: viewModel)
+                Divider()
+                ResetDefaultsPanel(viewModel: viewModel)
             }
 
             Divider()
@@ -286,6 +288,50 @@ private struct UpdateCheckPanelState {
     var systemImage: String
     var tint: Color
     var releaseButtonTitle: String
+}
+
+struct ResetDefaultsPanel: View {
+    @ObservedObject var viewModel: SettingsViewModel
+    @State private var isConfirmingReset = false
+
+    var body: some View {
+        DesignPanel {
+            HStack(alignment: .center, spacing: 16) {
+                IconBadge(systemImage: "arrow.counterclockwise", tint: .orange)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("恢复默认配置")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(SettingsTheme.ink)
+                    Text("清除当前所有菜单项、命令模板与常用目录，并按内置默认配置重新生成。此操作不可撤销。")
+                        .font(.system(size: 12))
+                        .foregroundStyle(SettingsTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .layoutPriority(1)
+
+                Spacer(minLength: 12)
+
+                Button {
+                    isConfirmingReset = true
+                } label: {
+                    Label("恢复默认", systemImage: "arrow.counterclockwise")
+                        .frame(minWidth: 112)
+                }
+                .buttonStyle(SettingsButtonStyle())
+                .controlSize(.large)
+                .help("将配置重置为首次安装时的默认值")
+            }
+        }
+        .alert("恢复默认配置？", isPresented: $isConfirmingReset) {
+            Button("取消", role: .cancel) {}
+            Button("恢复默认", role: .destructive) {
+                viewModel.resetToDefaults()
+            }
+        } message: {
+            Text("当前所有菜单项、命令模板与常用目录都会被清除，并替换为内置默认配置。此操作不可撤销。")
+        }
+    }
 }
 
 struct LaunchAtLoginPanel: View {

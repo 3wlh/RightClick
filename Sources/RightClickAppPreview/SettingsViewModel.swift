@@ -414,9 +414,7 @@ final class SettingsViewModel: NSObject, ObservableObject {
             apply(result: result)
             syncAllCommandTemplateActions()
 
-            var needsPersist = normalizeDeveloperEntrypointIdentifiers()
-            // AirDrop 菜单项补齐并同步默认名称、顺序与禁用状态。
-            needsPersist = normalizeAirDropAction() || needsPersist
+            let needsPersist = normalizeDeveloperEntrypointIdentifiers()
             if needsPersist {
                 try persistConfiguration(config, bookmarks: bookmarks)
             }
@@ -441,7 +439,7 @@ final class SettingsViewModel: NSObject, ObservableObject {
             bookmarks = defaultBookmarks
             config = defaultConfig
             hasUnsavedChanges = false
-            setStatus("已恢复默认预览配置", tone: .success)
+            setStatus("已恢复默认配置", tone: .success)
         } catch {
             setStatus("恢复默认配置失败：\(error.localizedDescription)", tone: .error)
         }
@@ -1523,43 +1521,6 @@ final class SettingsViewModel: NSObject, ObservableObject {
             }
             config.actions[actionIndex].order = baseOrder + index * 10
         }
-    }
-
-    /// AirDrop 菜单项：缺失时补齐，并把旧配置里的名称、顺序与启用状态同步到最新默认值。
-    @discardableResult
-    private func normalizeAirDropAction() -> Bool {
-        let deleteOrder = config.actions.first(where: { $0.kind == .deletePermanently })?.order
-
-        if let index = config.actions.firstIndex(where: { $0.kind == .airDrop }) {
-            var changed = false
-            if config.actions[index].title == "通过 AirDrop 发送" {
-                config.actions[index].title = "AirDrop 发送"
-                changed = true
-            }
-            if config.actions[index].isEnabled {
-                config.actions[index].isEnabled = false
-                changed = true
-            }
-            if let deleteOrder, config.actions[index].order <= deleteOrder {
-                config.actions[index].order = deleteOrder + 1
-                changed = true
-            }
-            return changed
-        }
-
-        config.actions.append(
-            RightClickAction(
-                id: uniqueActionID(base: "airdrop-share"),
-                title: "AirDrop 发送",
-                kind: .airDrop,
-                visibility: [.selection],
-                placement: .submenu,
-                group: .fileOperations,
-                isEnabled: false,
-                order: deleteOrder.map { $0 + 1 } ?? nextActionOrder
-            )
-        )
-        return true
     }
 
     private func normalizeCommandTemplateActionOrder() {

@@ -23,28 +23,30 @@ public struct ConfigurationBootstrapResult: Equatable, Sendable {
 }
 
 public struct ConfigurationBootstrapper {
-    private static let defaultDirectoryBootstrapMarkerName = ".default-directory-bootstrap-v1"
-
     private let fileManager: FileManager
     private let processHomeDirectoryOverride: URL?
     private let realUserHomeDirectoryOverride: URL?
+    private let defaults: DefaultConfiguration
 
     public init(fileManager: FileManager = .default) {
         self.init(
             fileManager: fileManager,
             processHomeDirectory: nil,
-            realUserHomeDirectory: nil
+            realUserHomeDirectory: nil,
+            defaults: .bundled
         )
     }
 
     init(
         fileManager: FileManager = .default,
         processHomeDirectory: URL?,
-        realUserHomeDirectory: URL?
+        realUserHomeDirectory: URL?,
+        defaults: DefaultConfiguration = .bundled
     ) {
         self.fileManager = fileManager
         self.processHomeDirectoryOverride = processHomeDirectory
         self.realUserHomeDirectoryOverride = realUserHomeDirectory
+        self.defaults = defaults
     }
 
     public func bootstrap(paths: RightClickStoragePaths = .defaultForCurrentProcess()) throws -> ConfigurationBootstrapResult {
@@ -53,22 +55,10 @@ public struct ConfigurationBootstrapper {
             && !fileManager.fileExists(atPath: paths.legacyConfigURL.path)
         let loaded = try PersistedConfigurationStore.load(paths: paths, fileManager: fileManager)
 
-        let originalBookmarks = loaded?.document.bookmarks ?? defaultBookmarks
-        let sanitizedBookmarks = sanitizeBookmarks(originalBookmarks)
-        // 默认目录只在首次初始化或旧版本迁移时补齐，之后尊重用户删除。
-        let shouldInjectDefaultBookmarks = didCreateConfig || !fileManager.fileExists(
-            atPath: defaultDirectoryBootstrapMarkerURL(for: paths).path
-        )
-        let bookmarks = shouldInjectDefaultBookmarks
-            ? repairDefaultBookmarks(sanitizedBookmarks, defaults: defaultBookmarks)
-            : sanitizedBookmarks
-
+        // 配置文件存在时完全以文件为准；只有从未生成过配置时才写入默认目录与默认动作。
+        let bookmarks = sanitizeBookmarks(loaded?.document.bookmarks ?? defaultBookmarks)
         let originalConfig = loaded?.document.config ?? defaultConfig(bookmarks: bookmarks)
-        let config = repairDefaultConfig(
-            originalConfig,
-            bookmarks: bookmarks,
-            defaultBookmarkIDs: defaultBookmarks.bookmarks.map(\.id)
-        )
+        let config = repairDefaultConfig(originalConfig)
         let document = PersistedConfiguration(config: config, bookmarks: bookmarks)
         let needsSave = loaded == nil
             || loaded?.isLegacy == true
@@ -76,13 +66,6 @@ public struct ConfigurationBootstrapper {
             || bookmarks != loaded?.document.bookmarks
         if needsSave {
             try PersistedConfigurationStore.save(document, paths: paths, fileManager: fileManager)
-        }
-
-        if shouldInjectDefaultBookmarks {
-            try Data("1\n".utf8).write(
-                to: defaultDirectoryBootstrapMarkerURL(for: paths),
-                options: [.atomic]
-            )
         }
 
         return ConfigurationBootstrapResult(
@@ -94,52 +77,35 @@ public struct ConfigurationBootstrapper {
         )
     }
 
-    private func defaultDirectoryBootstrapMarkerURL(for paths: RightClickStoragePaths) -> URL {
-        paths.baseURL.appendingPathComponent(Self.defaultDirectoryBootstrapMarkerName)
-    }
-
     public func defaultBookmarks() -> DirectoryBookmarkCatalog {
-        let home = realUserHomeDirectory
-        let candidates: [(String, String, URL)] = [
-            ("desktop", "桌面", home.appendingPathComponent("Desktop")),
-            ("downloads", "下载", home.appendingPathComponent("Downloads"))
-        ]
-
-        let bookmarks = candidates
-            .filter { fileManager.fileExists(atPath: $0.2.path) }
-            .map { id, displayName, url in
-                DirectoryBookmark(id: id, displayName: displayName, path: url.path)
+        let bookmarks = defaults.directories.compactMap { directory -> DirectoryBookmark? in
+            let path = expandedDirectoryPath(directory.path)
+            guard fileManager.fileExists(atPath: path) else {
+                return nil
             }
+            return DirectoryBookmark(id: directory.id, displayName: directory.title, path: path)
+        }
 
         return DirectoryBookmarkCatalog(bookmarks: bookmarks)
     }
 
-    private func repairDefaultBookmarks(
-        _ catalog: DirectoryBookmarkCatalog,
-        defaults: DirectoryBookmarkCatalog
-    ) -> DirectoryBookmarkCatalog {
-        var repaired = catalog
-        var existingIDs = Set(catalog.bookmarks.map(\.id))
-
-        for bookmark in defaults.bookmarks where existingIDs.insert(bookmark.id).inserted {
-            repaired.bookmarks.append(bookmark)
+    /// 展开默认目录里的 `~`。沙盒进程的 home 会指向容器，这里统一映射到真实用户目录。
+    private func expandedDirectoryPath(_ path: String) -> String {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed == "~" {
+            return realUserHomeDirectory.path
         }
-
-        return repaired
+        if trimmed.hasPrefix("~/") {
+            return realUserHomeDirectory
+                .appendingPathComponent(String(trimmed.dropFirst(2)))
+                .path
+        }
+        return (trimmed as NSString).expandingTildeInPath
     }
 
-    private func repairDefaultConfig(
-        _ config: RightClickConfig,
-        bookmarks: DirectoryBookmarkCatalog,
-        defaultBookmarkIDs: [String]
-    ) -> RightClickConfig {
+    private func repairDefaultConfig(_ config: RightClickConfig) -> RightClickConfig {
         var repaired = config
-        let bookmarkIDs = Set(bookmarks.bookmarks.map(\.id))
-        let directoryIDs = defaultBookmarkIDs.filter { bookmarkIDs.contains($0) }
 
-        appendMissing(directoryIDs, to: &repaired.shortcutDirectoryIDs)
-        appendMissingDirectoryActions(for: directoryIDs, bookmarks: bookmarks, to: &repaired.actions)
-        appendMissingFileOperationActions(to: &repaired.actions)
         enablePasteOnSelection(in: &repaired.actions)
         movePasteIntoFileOperationSubmenu(in: &repaired.actions)
         moveCopyPathToFileOperationFront(in: &repaired.actions)
@@ -283,13 +249,16 @@ public struct ConfigurationBootstrapper {
             ("template-gitignore", "Git Ignore", ".gitignore"),
             ("template-swift", "Swift 文件", "Untitled.swift")
         ]
+        let currentDefaultTemplateIDs = Set(defaults.resolvedFileTemplates.map(\.id))
         let removedIDs = templates
             .filter { template in
-                legacy.contains { legacyTemplate in
-                    template.id == legacyTemplate.id
-                        && template.title == legacyTemplate.title
-                        && template.defaultFileName == legacyTemplate.defaultFileName
-                }
+                // JSON 默认配置里重新声明的模板不应被当成历史遗留项删除。
+                !currentDefaultTemplateIDs.contains(template.id)
+                    && legacy.contains { legacyTemplate in
+                        template.id == legacyTemplate.id
+                            && template.title == legacyTemplate.title
+                            && template.defaultFileName == legacyTemplate.defaultFileName
+                    }
             }
             .map(\.id)
         guard !removedIDs.isEmpty else {
@@ -305,34 +274,11 @@ public struct ConfigurationBootstrapper {
         }
     }
 
-    private func appendMissing(_ ids: [String], to existingIDs: inout [String]) {
-        var seenIDs = Set(existingIDs)
-        for id in ids where seenIDs.insert(id).inserted {
-            existingIDs.append(id)
-        }
-    }
-
-    private func appendMissingDirectoryActions(
-        for directoryIDs: [String],
-        bookmarks: DirectoryBookmarkCatalog,
-        to actions: inout [RightClickAction]
-    ) {
-        var existingActionIDs = Set(actions.map(\.id))
-        var order = (actions.map(\.order).max() ?? 0) + 10
-
-        for id in directoryIDs {
-            guard let bookmark = bookmarks.bookmark(id: id) else {
-                continue
-            }
-
-            for action in defaultDirectoryActions(for: bookmark, startingAt: order) where existingActionIDs.insert(action.id).inserted {
-                actions.append(action)
-                order += 10
-            }
-        }
-    }
-
-    private func defaultDirectoryActions(for bookmark: DirectoryBookmark, startingAt order: Int) -> [RightClickAction] {
+    private func defaultDirectoryActions(
+        for bookmark: DirectoryBookmark,
+        startingAt order: Int,
+        isEnabled: Bool
+    ) -> [RightClickAction] {
         [
             RightClickAction(
                 id: "open-directory-\(bookmark.id)",
@@ -341,7 +287,7 @@ public struct ConfigurationBootstrapper {
                 visibility: [.container, .toolbar],
                 placement: .submenu,
                 group: .commonDirectories,
-                isEnabled: false,
+                isEnabled: isEnabled,
                 order: order,
                 payload: ActionPayload(directoryID: bookmark.id)
             ),
@@ -352,7 +298,7 @@ public struct ConfigurationBootstrapper {
                 visibility: [.selection],
                 placement: .submenu,
                 group: .moveToCommonDirectory,
-                isEnabled: false,
+                isEnabled: isEnabled,
                 order: order + 10,
                 payload: ActionPayload(directoryID: bookmark.id)
             ),
@@ -363,21 +309,16 @@ public struct ConfigurationBootstrapper {
                 visibility: [.selection],
                 placement: .submenu,
                 group: .copyToCommonDirectory,
-                isEnabled: false,
+                isEnabled: isEnabled,
                 order: order + 20,
                 payload: ActionPayload(directoryID: bookmark.id)
             )
         ]
     }
 
-    private func appendMissingFileOperationActions(to actions: inout [RightClickAction]) {
-        var existingActionIDs = Set(actions.map(\.id))
-        var order = (actions.map(\.order).max() ?? 0) + 10
-
-        for action in RightClickConfig.defaultFileOperationActions(startingAt: order) where existingActionIDs.insert(action.id).inserted {
-            actions.append(action)
-            order += 10
-        }
+    /// 目录动作默认是否启用，由默认配置里的 `directories[].isEnabled` 控制。
+    private func directoryIsEnabled(_ directoryID: String) -> Bool {
+        defaults.directories.first { $0.id == directoryID }?.isEnabled ?? false
     }
 
     private func removeLegacyDeveloperEntrypoints(
@@ -388,13 +329,16 @@ public struct ConfigurationBootstrapper {
             ("developer-vscode", "在 VS Code 打开", "com.microsoft.VSCode"),
             ("developer-cursor", "在 Cursor 打开", "com.todesktop.230313mzl4w4u92")
         ]
+        let currentDefaultIDs = Set(defaults.resolvedDeveloperEntrypoints.map(\.id))
         let removedIDs = entrypoints
             .filter { entrypoint in
-                legacy.contains { legacyEntry in
-                    entrypoint.id == legacyEntry.id
-                        && entrypoint.title == legacyEntry.title
-                        && entrypoint.bundleIdentifier == legacyEntry.bundleIdentifier
-                }
+                // JSON 默认配置里重新声明的入口不应被当成历史遗留项删除。
+                !currentDefaultIDs.contains(entrypoint.id)
+                    && legacy.contains { legacyEntry in
+                        entrypoint.id == legacyEntry.id
+                            && entrypoint.title == legacyEntry.title
+                            && entrypoint.bundleIdentifier == legacyEntry.bundleIdentifier
+                    }
             }
             .map(\.id)
         guard !removedIDs.isEmpty else {
@@ -412,7 +356,7 @@ public struct ConfigurationBootstrapper {
 
     private func repairDefaultDeveloperEntrypointTargets(in entrypoints: inout [DeveloperEntrypoint]) {
         let defaultsByID = Dictionary(
-            uniqueKeysWithValues: RightClickConfig.defaultDeveloperEntrypoints().map { ($0.id, $0) }
+            uniqueKeysWithValues: defaults.resolvedDeveloperEntrypoints.map { ($0.id, $0) }
         )
 
         for index in entrypoints.indices {
@@ -490,53 +434,73 @@ public struct ConfigurationBootstrapper {
     public func defaultConfig(bookmarks: DirectoryBookmarkCatalog) -> RightClickConfig {
         let directoryIDs = bookmarks.bookmarks.map(\.id)
         return RightClickConfig(
+            maxRootMenuActions: defaults.maxRootMenuActions,
             shortcutDirectoryIDs: directoryIDs,
-            actions: defaultActions(bookmarks: bookmarks)
+            actions: defaultActions(bookmarks: bookmarks),
+            fileTemplates: defaults.resolvedFileTemplates,
+            commandTemplates: defaults.resolvedCommandTemplates,
+            developerEntrypoints: defaults.resolvedDeveloperEntrypoints,
+            submenuGroupOrder: defaults.submenuGroupOrder
         )
     }
 
     private func defaultActions(bookmarks: DirectoryBookmarkCatalog) -> [RightClickAction] {
-        var actions = RightClickConfig.defaultFileOperationActions(startingAt: 10)
-        var order = (actions.map(\.order).max() ?? 0) + 10
+        var actions: [RightClickAction] = []
+        var order = 10
+
+        for action in defaults.fileOperationActions {
+            actions.append(action.makeAction(order: order, defaultGroup: .fileOperations))
+            order += 10
+        }
 
         for bookmark in bookmarks.bookmarks {
-            actions.append(contentsOf: defaultDirectoryActions(for: bookmark, startingAt: order))
+            actions.append(
+                contentsOf: defaultDirectoryActions(
+                    for: bookmark,
+                    startingAt: order,
+                    isEnabled: directoryIsEnabled(bookmark.id)
+                )
+            )
             order += 30
         }
 
-        for template in RightClickConfig.defaultFileTemplates() {
+        for template in defaults.fileTemplates {
+            let fileTemplate = template.fileTemplate
             actions.append(
                 RightClickAction(
-                    id: "create-\(template.id)",
-                    title: "新建\(template.title)",
+                    id: "create-\(fileTemplate.id)",
+                    title: "新建\(fileTemplate.title)",
                     kind: .createFile,
                     visibility: [.container],
                     placement: .submenu,
                     group: .createFile,
+                    isEnabled: template.isEnabled ?? true,
                     order: order,
-                    payload: ActionPayload(templateID: template.id)
+                    payload: ActionPayload(templateID: fileTemplate.id)
                 )
             )
             order += 10
         }
 
-        for entrypoint in RightClickConfig.defaultDeveloperEntrypoints() {
+        for entrypoint in defaults.developerEntrypoints {
+            let developerEntrypoint = entrypoint.developerEntrypoint
             actions.append(
                 RightClickAction(
-                    id: "open-\(entrypoint.id)",
-                    title: entrypoint.title,
+                    id: "open-\(developerEntrypoint.id)",
+                    title: developerEntrypoint.title,
                     kind: .openInApp,
                     visibility: [.selection, .container, .toolbar],
                     placement: .submenu,
                     group: .developerEntrypoints,
+                    isEnabled: entrypoint.isEnabled ?? true,
                     order: order,
-                    payload: ActionPayload(developerEntrypointID: entrypoint.id)
+                    payload: ActionPayload(developerEntrypointID: developerEntrypoint.id)
                 )
             )
             order += 10
         }
 
-        for template in RightClickConfig.defaultCommandTemplates() {
+        for template in defaults.commandTemplates {
             actions.append(
                 RightClickAction(
                     id: "run-\(template.id)",
@@ -545,7 +509,7 @@ public struct ConfigurationBootstrapper {
                     visibility: [.selection, .container],
                     placement: .submenu,
                     group: .commandTemplates,
-                    isEnabled: false,
+                    isEnabled: template.isEnabled ?? false,
                     order: order,
                     payload: ActionPayload(commandTemplateID: template.id)
                 )

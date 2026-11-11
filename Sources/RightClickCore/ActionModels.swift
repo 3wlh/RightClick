@@ -438,6 +438,8 @@ public struct DeveloperEntrypoint: Codable, Equatable, Identifiable, Sendable {
     public var iconSymbol: String?
     /// 应用所在目录，bundleIdentifier 解析失败时用作兜底查找。
     public var applicationDirectory: String?
+    /// 应用的完整路径（例如 `/Applications/Visual Studio Code.app`），优先级最高。
+    public var applicationPath: String?
 
     public init(
         id: String,
@@ -445,7 +447,8 @@ public struct DeveloperEntrypoint: Codable, Equatable, Identifiable, Sendable {
         bundleIdentifier: String,
         targetMode: DeveloperTargetMode = .dynamic,
         iconSymbol: String? = nil,
-        applicationDirectory: String? = nil
+        applicationDirectory: String? = nil,
+        applicationPath: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -453,6 +456,7 @@ public struct DeveloperEntrypoint: Codable, Equatable, Identifiable, Sendable {
         self.targetMode = targetMode
         self.iconSymbol = iconSymbol
         self.applicationDirectory = applicationDirectory
+        self.applicationPath = applicationPath
     }
 }
 

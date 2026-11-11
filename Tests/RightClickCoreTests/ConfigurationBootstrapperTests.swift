@@ -114,7 +114,7 @@ final class ConfigurationBootstrapperTests: XCTestCase {
         XCTAssertEqual(result.config.shortcutDirectoryIDs, ["desktop", "backup"])
     }
 
-    func testBootstrapRepairsMissingDefaultDirectoryInjection() throws {
+    func testBootstrapKeepsExistingBookmarksWithoutInjectingDefaults() throws {
         let baseDirectory = try temporaryDirectory()
         let paths = RightClickStoragePaths(baseURL: baseDirectory.appendingPathComponent("config"))
         let processHome = baseDirectory
@@ -155,13 +155,12 @@ final class ConfigurationBootstrapperTests: XCTestCase {
 
         XCTAssertFalse(result.didCreateBookmarks)
         XCTAssertFalse(result.didCreateConfig)
-        XCTAssertEqual(savedBookmarks.bookmark(id: "downloads")?.path, downloads.path)
-        XCTAssertNil(savedBookmarks.bookmark(id: "code"))
-        XCTAssertEqual(savedConfig.shortcutDirectoryIDs, ["desktop", "downloads"])
+        XCTAssertNil(savedBookmarks.bookmark(id: "downloads"))
+        XCTAssertEqual(savedConfig.shortcutDirectoryIDs, ["desktop"])
         XCTAssertTrue(savedConfig.actions.contains { $0.id == "custom-action" })
-        XCTAssertTrue(savedConfig.actions.contains { $0.id == "open-directory-downloads" })
-        XCTAssertTrue(savedConfig.actions.contains { $0.id == "move-to-downloads" })
-        XCTAssertTrue(savedConfig.actions.contains { $0.id == "copy-to-downloads" })
+        XCTAssertFalse(savedConfig.actions.contains { $0.id == "open-directory-downloads" })
+        XCTAssertFalse(savedConfig.actions.contains { $0.id == "move-to-downloads" })
+        XCTAssertFalse(savedConfig.actions.contains { $0.id == "copy-to-downloads" })
     }
 
     func testBootstrapDoesNotReinjectUserDeletedDefaultDirectoryAfterMigration() throws {
@@ -196,7 +195,7 @@ final class ConfigurationBootstrapperTests: XCTestCase {
         XCTAssertFalse(result.config.actions.contains { $0.payload.directoryID == "downloads" })
     }
 
-    func testBootstrapRestoresMissingFileOperationActions() throws {
+    func testBootstrapKeepsExistingConfigWithoutRestoringDefaultActions() throws {
         let baseDirectory = try temporaryDirectory()
         let paths = RightClickStoragePaths(baseURL: baseDirectory.appendingPathComponent("config"))
         var config = RightClickConfig(actions: [])
@@ -207,10 +206,7 @@ final class ConfigurationBootstrapperTests: XCTestCase {
         _ = try ConfigurationBootstrapper().bootstrap(paths: paths)
         let savedConfig = try readDocument(paths).config
 
-        XCTAssertTrue(savedConfig.actions.contains { $0.id == "copy-path" && $0.kind == .copyPath })
-        XCTAssertTrue(savedConfig.actions.contains { $0.id == "hide-selection" && $0.kind == .hideItems })
-        XCTAssertTrue(savedConfig.actions.contains { $0.id == "unhide-selection" && $0.kind == .unhideItems })
-        XCTAssertTrue(savedConfig.actions.contains { $0.id == "delete-permanently" && $0.kind == .deletePermanently })
+        XCTAssertTrue(savedConfig.actions.isEmpty)
     }
 
     func testBootstrapRemovesLegacyDefaultGitIgnoreAndSwiftTemplates() throws {
