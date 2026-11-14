@@ -11,7 +11,6 @@ ARTIFACT_SUFFIX="${ARTIFACT_SUFFIX:-$(uname -m)}"
 DIST_DIR="${DIST_DIR:-dist}"
 DERIVED_DATA_PATH="${DERIVED_DATA_PATH:-DerivedData}"
 APP_ICON_SOURCE="${APP_ICON_SOURCE:-design/icon.png}"
-APP_SIDEBAR_ICON_SOURCE="${APP_SIDEBAR_ICON_SOURCE:-design/sidebar-icon.png}"
 APP_ICON_NAME="${APP_ICON_NAME:-RightClickIcon}"
 RIGHTCLICKPRO_PACKAGE_DMG="${RIGHTCLICKPRO_PACKAGE_DMG:-0}"
 RIGHTCLICKPRO_REGISTER_FINDER_EXTENSION="${RIGHTCLICKPRO_REGISTER_FINDER_EXTENSION:-0}"
@@ -92,7 +91,9 @@ build_number() {
     return
   fi
 
-  printf "1"
+  # 本地打包每次生成不同的 build number。Finder / iconservices 按 bundle 版本缓存图标，
+  # 版本不变就会一直显示旧图标（PR #175 也是用 bump CURRENT_PROJECT_VERSION 解决的）。
+  printf "%s" "$(date +%Y%m%d%H%M)"
 }
 
 package_xcode_archive_if_configured() {
@@ -146,8 +147,33 @@ write_app_info_plist() {
   <string>$APP_NAME</string>
   <key>CFBundleIdentifier</key>
   <string>$BUNDLE_IDENTIFIER</string>
+  <!--
+    App 自身（Dock、Finder 文件列表）用品牌图标 icon.png。
+    侧边栏卷条目的图标由下面的 CFBundleSymbolName 接管，不会显示这个图标。
+  -->
   <key>CFBundleIconFile</key>
   <string>$APP_ICON_NAME</string>
+  <!--
+    Finder Sync 会用宿主 App 的图标绘制它观察的每个卷根在侧边栏的条目，
+    导致外置盘/DMG 显示 RightClick 的 App 图标。CFBundleSymbolName 让 Finder
+    改用系统驱动器符号（PR #175 的做法），只影响侧边栏。
+  -->
+  <key>CFBundleIcons</key>
+  <dict>
+    <key>CFBundlePrimaryIcon</key>
+    <dict>
+      <key>CFBundleSymbolName</key>
+      <string>externaldrive</string>
+      <!--
+        声明了 CFBundleIcons 后系统优先用它解析图标，这里必须给出实际图标文件，
+        否则 App 图标会退化成空白文档图标。
+      -->
+      <key>CFBundleIconFiles</key>
+      <array>
+        <string>$APP_ICON_NAME</string>
+      </array>
+    </dict>
+  </dict>
   <key>CFBundleDisplayName</key>
   <string>$APP_NAME</string>
   <key>CFBundleInfoDictionaryVersion</key>
@@ -368,22 +394,6 @@ copy_app_icon_resources() {
   done
   sips -z 512 512 "$APP_ICON_SOURCE" \
     --out "$iconset_path/icon_256x256@2x.png" >/dev/null
-
-  # Finder Sync 会把监视的卷根目录在 Finder 侧边栏的图标替换成这里提供的模板图，
-  # 缺少模板图时系统会退化成通用文档图标，因此必须随 icns 一起打包。
-  if [[ -f "$APP_SIDEBAR_ICON_SOURCE" ]]; then
-    local sidebar_spec
-    for sidebar_spec in \
-      "sidebar_16x16.png:16" \
-      "sidebar_16x16@2x.png:32" \
-      "sidebar_18x18.png:32" \
-      "sidebar_18x18@2x.png:64" \
-      "sidebar_32x32.png:128" \
-      "sidebar_32x32@2x.png:256"; do
-      sips -z "${sidebar_spec##*:}" "${sidebar_spec##*:}" "$APP_SIDEBAR_ICON_SOURCE" \
-        --out "$iconset_path/${sidebar_spec%%:*}" >/dev/null
-    done
-  fi
 
   iconutil -c icns "$iconset_path" -o "$icon_path"
   rm -rf "$iconset_path"
@@ -628,7 +638,7 @@ validate_preview_bundle() {
 
   local app_icon
   app_icon="$(/usr/libexec/PlistBuddy -c "Print :CFBundleIconFile" "$app_path/Contents/Info.plist")"
-  if [[ "$app_icon" != "$APP_ICON_NAME" ]]; then
+  if [[ ! -f "$app_path/Contents/Resources/$app_icon.icns" ]]; then
     echo "Invalid app icon file: $app_icon" >&2
     exit 65
   fi
