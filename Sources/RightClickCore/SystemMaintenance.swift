@@ -2,6 +2,7 @@ import Foundation
 
 public enum SystemMaintenanceTask: String, Codable, Equatable, Sendable {
     case installFinderExtension
+    case uninstallFinderExtension
     case restartFinder
     case repairFinderContextMenu
     case checkFullDiskAccess
@@ -26,6 +27,7 @@ public struct SystemMaintenanceRequest: Codable, Equatable, Sendable {
 public struct SystemMaintenanceResult: Codable, Equatable, Sendable {
     public var didRegisterFinderExtension: Bool
     public var didEnableFinderExtension: Bool
+    public var didDisableFinderExtension: Bool
     public var didRestartFinder: Bool
     public var hasFullDiskAccess: Bool?
     public var messages: [String]
@@ -34,6 +36,7 @@ public struct SystemMaintenanceResult: Codable, Equatable, Sendable {
     public init(
         didRegisterFinderExtension: Bool = false,
         didEnableFinderExtension: Bool = false,
+        didDisableFinderExtension: Bool = false,
         didRestartFinder: Bool = false,
         hasFullDiskAccess: Bool? = nil,
         messages: [String] = [],
@@ -41,6 +44,7 @@ public struct SystemMaintenanceResult: Codable, Equatable, Sendable {
     ) {
         self.didRegisterFinderExtension = didRegisterFinderExtension
         self.didEnableFinderExtension = didEnableFinderExtension
+        self.didDisableFinderExtension = didDisableFinderExtension
         self.didRestartFinder = didRestartFinder
         self.hasFullDiskAccess = hasFullDiskAccess
         self.messages = messages
@@ -54,6 +58,7 @@ public struct SystemMaintenanceResult: Codable, Equatable, Sendable {
     mutating func merge(_ other: SystemMaintenanceResult) {
         didRegisterFinderExtension = didRegisterFinderExtension || other.didRegisterFinderExtension
         didEnableFinderExtension = didEnableFinderExtension || other.didEnableFinderExtension
+        didDisableFinderExtension = didDisableFinderExtension || other.didDisableFinderExtension
         didRestartFinder = didRestartFinder || other.didRestartFinder
         hasFullDiskAccess = other.hasFullDiskAccess ?? hasFullDiskAccess
         messages.append(contentsOf: other.messages)
@@ -144,6 +149,8 @@ public final class SystemMaintenanceService {
         switch request.task {
         case .installFinderExtension:
             return installFinderExtension(request)
+        case .uninstallFinderExtension:
+            return uninstallFinderExtension(request)
         case .restartFinder:
             return restartFinder()
         case .repairFinderContextMenu:
@@ -200,6 +207,25 @@ public final class SystemMaintenanceService {
             result.errors.append("启用 Finder Extension 失败：\(error.localizedDescription)")
         }
 
+        return result
+    }
+
+    private func uninstallFinderExtension(_ request: SystemMaintenanceRequest) -> SystemMaintenanceResult {
+        var result = SystemMaintenanceResult()
+
+        switch run("/usr/bin/pluginkit", arguments: ["-e", "ignore", "-i", request.finderExtensionBundleIdentifier]) {
+        case .success(let outcome) where outcome.succeeded:
+            result.didDisableFinderExtension = true
+            result.messages.append("Finder Extension 已禁用")
+        case .success(let outcome):
+            result.errors.append("卸载 Finder Extension 失败：\(diagnostic(from: outcome))")
+            return result
+        case .failure(let error):
+            result.errors.append("卸载 Finder Extension 失败：\(error.localizedDescription)")
+            return result
+        }
+
+        result.merge(restartFinder())
         return result
     }
 

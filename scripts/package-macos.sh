@@ -188,8 +188,6 @@ write_app_info_plist() {
   <string>$(build_number)</string>
   <key>LSMinimumSystemVersion</key>
   <string>$RIGHTCLICKPRO_MACOS_DEPLOYMENT_TARGET</string>
-  <key>LSUIElement</key>
-  <true/>
   <key>NSHighResolutionCapable</key>
   <true/>
   <key>NSAppleEventsUsageDescription</key>

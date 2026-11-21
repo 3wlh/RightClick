@@ -1,10 +1,9 @@
 import AppKit
 import RightClickCore
-import ServiceManagement
 import SwiftUI
 import UniformTypeIdentifiers
 
-private enum FinderExtensionSetupDefaults {
+enum FinderExtensionSetupDefaults {
     static let completedSignatureKey = "RightClick.completedFinderExtensionSetupSignature"
 }
 
@@ -192,14 +191,6 @@ final class SettingsViewModel: NSObject, ObservableObject {
         case unavailable(String)
     }
 
-    enum LaunchAtLoginStatus: Equatable {
-        case unchecked
-        case disabled
-        case enabled
-        case requiresApproval
-        case unavailable(String)
-    }
-
     enum UpdateCheckStatus: Equatable {
         case unchecked
         case checking
@@ -228,7 +219,7 @@ final class SettingsViewModel: NSObject, ObservableObject {
     @Published var finderExtensionNeedsAttention = false
     @Published var finderExtensionSetupMessage = ""
     @Published private(set) var fullDiskAccessStatus: FullDiskAccessStatus = .unchecked
-    @Published private(set) var launchAtLoginStatus: LaunchAtLoginStatus = .unchecked
+    @Published private(set) var finderExtensionIsRunning: Bool?
     @Published private(set) var updateCheckStatus: UpdateCheckStatus = .unchecked
 
     private var paths: RightClickStoragePaths
@@ -247,12 +238,6 @@ final class SettingsViewModel: NSObject, ObservableObject {
             name: Notification.Name(RightClickConstants.actionFailureNotificationName),
             object: nil
         )
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleApplicationDidBecomeActive),
-            name: NSApplication.didBecomeActiveNotification,
-            object: nil
-        )
     }
 
     deinit {
@@ -266,8 +251,8 @@ final class SettingsViewModel: NSObject, ObservableObject {
     static func bootstrap() -> SettingsViewModel {
         let viewModel = SettingsViewModel()
         viewModel.loadOrBootstrap()
-        viewModel.refreshLaunchAtLoginStatus()
         viewModel.scheduleFinderExtensionRegistration()
+        viewModel.refreshFinderExtensionStatus()
         return viewModel
     }
 
@@ -330,45 +315,6 @@ final class SettingsViewModel: NSObject, ObservableObject {
         case .granted:
             return .success
         case .missing:
-            return .warning
-        case .unavailable:
-            return .error
-        }
-    }
-
-    var launchAtLoginToggleIsOn: Bool {
-        switch launchAtLoginStatus {
-        case .enabled, .requiresApproval:
-            return true
-        case .unchecked, .disabled, .unavailable:
-            return false
-        }
-    }
-
-    var launchAtLoginStatusMessage: String {
-        switch launchAtLoginStatus {
-        case .unchecked:
-            return "尚未检查登录项状态"
-        case .disabled:
-            return "当前不会在登录时自动启动"
-        case .enabled:
-            return "已加入 macOS 登录项"
-        case .requiresApproval:
-            return "已提交登录项请求，需要在系统设置中允许"
-        case .unavailable(let message):
-            return "无法读取或更新登录项：\(message)"
-        }
-    }
-
-    var launchAtLoginStatusTone: StatusTone {
-        switch launchAtLoginStatus {
-        case .unchecked:
-            return .neutral
-        case .disabled:
-            return .neutral
-        case .enabled:
-            return .success
-        case .requiresApproval:
             return .warning
         case .unavailable:
             return .error
@@ -521,16 +467,30 @@ final class SettingsViewModel: NSObject, ObservableObject {
         }
     }
 
+    /// 系统设置里 Finder 扩展的入口随 macOS 版本变化，提示文案跟随当前系统。
+    var finderExtensionSettingsPath: String {
+        if ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 26 {
+            return "系统设置 › 隐私与安全性 › 扩展 › 访达扩展"
+        }
+        return "系统设置 › 通用 › 登录项与扩展 › 访达扩展"
+    }
+
     func openFinderExtensionSettings() {
-        guard let url = URL(string: "x-apple.systempreferences:com.apple.ExtensionsPreferences?extensionPointIdentifier=com.apple.FinderSync") else {
-            setStatus("无法打开 Finder 扩展设置，请手动前往系统设置 > 隐私与安全性 > 扩展", tone: .error)
+        let urlString: String
+        if ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 26 {
+            urlString = "x-apple.systempreferences:com.apple.ExtensionsPreferences?extensionPointIdentifier=com.apple.FinderSync"
+        } else {
+            urlString = "x-apple.systempreferences:com.apple.LoginItems-Settings.extension"
+        }
+        guard let url = URL(string: urlString) else {
+            setStatus("无法打开 Finder 扩展设置，请手动前往\(finderExtensionSettingsPath)", tone: .error)
             return
         }
 
         if NSWorkspace.shared.open(url) {
             setStatus("已打开系统设置，请启用 \(AppMetadata.displayName) Finder Extension", tone: .neutral)
         } else {
-            setStatus("无法打开系统设置，请手动前往隐私与安全性 > 扩展 > Finder 扩展", tone: .warning)
+            setStatus("无法打开系统设置，请手动前往\(finderExtensionSettingsPath)", tone: .warning)
         }
     }
 
@@ -544,43 +504,6 @@ final class SettingsViewModel: NSObject, ObservableObject {
             setStatus("已打开完全磁盘访问权限设置，请允许 \(AppMetadata.displayName)。授权后若文件动作仍被拦截，会显示具体错误。", tone: .neutral)
         } else {
             setStatus("无法打开系统设置，请手动前往隐私与安全性 > 完全磁盘访问权限", tone: .warning)
-        }
-    }
-
-    func refreshLaunchAtLoginStatus() {
-        launchAtLoginStatus = mappedLaunchAtLoginStatus(SMAppService.mainApp.status)
-    }
-
-    func setLaunchAtLoginEnabled(_ isEnabled: Bool) {
-        do {
-            if isEnabled {
-                try SMAppService.mainApp.register()
-            } else {
-                try SMAppService.mainApp.unregister()
-            }
-            refreshLaunchAtLoginStatus()
-
-            let tone: StatusTone = launchAtLoginStatus == .requiresApproval ? .warning : .success
-            setStatus(
-                isEnabled ? "已请求登录时自动启动 \(AppMetadata.displayName)" : "已关闭登录时自动启动",
-                tone: tone
-            )
-        } catch {
-            refreshLaunchAtLoginStatus()
-            setStatus("更新登录项失败：\(error.localizedDescription)", tone: .error)
-        }
-    }
-
-    func openLoginItemsSettings() {
-        guard let url = URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension") else {
-            setStatus("无法打开登录项设置，请手动前往系统设置 > 通用 > 登录项", tone: .error)
-            return
-        }
-
-        if NSWorkspace.shared.open(url) {
-            setStatus("已打开登录项设置，请确认 \(AppMetadata.displayName) 是否允许后台运行", tone: .neutral)
-        } else {
-            setStatus("无法打开登录项设置，请手动前往系统设置 > 通用 > 登录项", tone: .warning)
         }
     }
 
@@ -698,6 +621,81 @@ final class SettingsViewModel: NSObject, ObservableObject {
         }
     }
 
+    func loadFinderExtension() {
+        repairFinderContextMenu(restartFinder: true, userInitiated: true)
+        scheduleFinderExtensionStatusRefresh()
+    }
+
+    /// 系统限制导致 pluginkit 查询不可用，这里以扩展进程是否存在判断加载状态。
+    func refreshFinderExtensionStatus() {
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+            process.arguments = ["-f", "RightClickFinderExtension"]
+            process.standardOutput = Pipe()
+            process.standardError = Pipe()
+
+            var isRunning: Bool?
+            do {
+                try process.run()
+                process.waitUntilExit()
+                isRunning = process.terminationStatus == 0
+            } catch {
+                isRunning = nil
+            }
+
+            DispatchQueue.main.async {
+                self?.finderExtensionIsRunning = isRunning
+            }
+        }
+    }
+
+    /// Finder 重启后扩展进程需要一点时间才会重新加载，延迟再查一次状态。
+    private func scheduleFinderExtensionStatusRefresh() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            self?.refreshFinderExtensionStatus()
+        }
+    }
+
+    /// 卸载 = 让 pluginkit 忽略该扩展并重启 Finder；扩展文件仍随 App 包保留，可随时重新加载。
+    func unloadFinderExtension() {
+        guard !isRepairingFinderMenu else {
+            return
+        }
+
+        isRepairingFinderMenu = true
+        setStatus("正在卸载右键菜单扩展并重启 Finder...", tone: .warning)
+
+        let request = SystemMaintenanceRequest(task: .uninstallFinderExtension)
+        actionRunnerClient.performMaintenance(request) { [weak self] response in
+            guard let viewModel = self else {
+                return
+            }
+            let maintenanceResponse = MaintenanceResponse(response)
+            DispatchQueue.main.async { [weak viewModel, maintenanceResponse] in
+                viewModel?.isRepairingFinderMenu = false
+                switch maintenanceResponse {
+                case .success(let result):
+                    if result.isSuccess {
+                        viewModel?.setStatus("右键菜单扩展已卸载，Finder 已重启", tone: .success)
+                        viewModel?.scheduleFinderExtensionStatusRefresh()
+                    } else {
+                        let detail = result.errors.first ?? "未知错误"
+                        viewModel?.setStatus(
+                            "卸载右键菜单扩展失败：\(detail)。可在 \(viewModel?.finderExtensionSettingsPath ?? "") 手动关闭",
+                            tone: .error
+                        )
+                    }
+                case .failure(let errorMessage):
+                    viewModel?.setStatus(
+                        "卸载右键菜单扩展失败：ActionRunner XPC 服务不可用（\(errorMessage)）。可在 \(viewModel?.finderExtensionSettingsPath ?? "") 手动关闭",
+                        tone: .error
+                    )
+                }
+            }
+        }
+    }
+
     @objc nonisolated private func handleActionFailureNotification(_ notification: Notification) {
         let userInfo = notification.userInfo
         let actionID = userInfo?[RightClickConstants.actionFailureActionIDKey] as? String
@@ -710,10 +708,6 @@ final class SettingsViewModel: NSObject, ObservableObject {
             } ?? actionID ?? "Finder 操作"
             setStatus("\(actionTitle)失败：\(message)", tone: .error)
         }
-    }
-
-    @objc private func handleApplicationDidBecomeActive() {
-        refreshLaunchAtLoginStatus()
     }
 
     func setActionEnabled(_ isEnabled: Bool, actionID: String) {
@@ -1318,17 +1312,17 @@ final class SettingsViewModel: NSObject, ObservableObject {
             if result.didRegisterFinderExtension || result.didEnableFinderExtension || result.didRestartFinder {
                 setStatusIfUserInitiated(
                     userInitiated,
-                    "右键菜单部分修复完成，但仍需手动确认：\(detail)",
+                    "右键菜单部分修复完成，但仍需手动确认：\(detail)。请前往 \(finderExtensionSettingsPath) 手动开启",
                     tone: .warning
                 )
             } else if userInitiated {
-                setStatus("修复右键菜单失败：\(detail)", tone: .error)
+                setStatus("修复右键菜单失败：\(detail)。请前往 \(finderExtensionSettingsPath) 手动开启", tone: .error)
             }
         case .failure(let errorMessage):
             let message = "ActionRunner XPC 服务不可用：\(errorMessage)"
             markFinderExtensionNeedsAttention(message)
             if userInitiated {
-                setStatus("修复右键菜单失败：\(message)", tone: .error)
+                setStatus("修复右键菜单失败：\(message)。可在 \(finderExtensionSettingsPath) 手动开启", tone: .error)
             }
         }
     }
@@ -1394,21 +1388,6 @@ final class SettingsViewModel: NSObject, ObservableObject {
         case .failure(let message):
             updateCheckStatus = .unavailable(message)
             setStatus(message, tone: .error)
-        }
-    }
-
-    private func mappedLaunchAtLoginStatus(_ status: SMAppService.Status) -> LaunchAtLoginStatus {
-        switch status {
-        case .notRegistered:
-            return .disabled
-        case .enabled:
-            return .enabled
-        case .requiresApproval:
-            return .requiresApproval
-        case .notFound:
-            return .unavailable("系统找不到当前 App 的登录项服务")
-        @unknown default:
-            return .unavailable("未知登录项状态")
         }
     }
 

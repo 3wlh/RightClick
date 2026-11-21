@@ -53,22 +53,12 @@ enum AppThemePreference: String, CaseIterable, Identifiable {
     }
 }
 
-/// 菜单栏快捷菜单显隐偏好；默认显示，关闭后从启动台打开 App 直达设置窗口。
-enum MenuBarQuickMenuPreference {
-    static let storageKey = "com.local.rightclick.settings.menubar.quickMenuEnabled"
-
-    static var isEnabled: Bool {
-        (UserDefaults.standard.object(forKey: storageKey) as? Bool) ?? true
-    }
-}
-
 @main
 struct RightClickAppPreview: App {
     @NSApplicationDelegateAdaptor(RightClickAppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        // LSUIElement 壳：状态栏快捷菜单与设置窗口均由 AppKit 控制器管理，
-        // 这里只保留一个不可见的占位场景。
+        // 设置窗口由 AppKit 控制器管理，这里只保留一个不可见的占位场景。
         Settings {
             EmptyView()
         }
@@ -77,25 +67,16 @@ struct RightClickAppPreview: App {
 
 @MainActor
 final class RightClickAppDelegate: NSObject, NSApplicationDelegate {
-    private let quickMenuController = MenuBarQuickMenuController()
-
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // 尽早完成配置加载与 Finder 扩展注册调度。
-        _ = SettingsViewModel.shared
+        // 启动阶段只保证配置文件存在并检查扩展注册，不创建设置页状态，
+        // 避免后台常驻时把 SwiftUI 视图树与配置状态一直留在内存里。
+        ensureConfigurationFileExists()
+        FinderExtensionStartupRegistrar.registerIfNeeded()
         applyApplicationMenuTitle()
 
-        // 设置页开关实时生效：偏好变化时同步状态栏快捷菜单显隐。
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleUserDefaultsDidChange),
-            name: UserDefaults.didChangeNotification,
-            object: nil
-        )
-        quickMenuController.syncVisibility()
-
-        // 隐藏菜单栏快捷菜单时，从启动台首次拉起 App 直接进入设置窗口；
-        // 开机登录项自启（由 loginwindow 拉起）时不弹窗，保持静默后台运行。
-        if !MenuBarQuickMenuPreference.isEnabled && !isLaunchedByLoginItem {
+        // 设置窗口是 App 唯一的前台界面：非登录项启动（启动台/双击）总是直接进入设置窗口，
+        // 关闭窗口即退出进程；开机登录项自启（由 loginwindow 拉起）时不弹窗，保持静默后台运行。
+        if !isLaunchedByLoginItem {
             SettingsWindowController.shared.showSettings()
         }
     }
@@ -113,21 +94,15 @@ final class RightClickAppDelegate: NSObject, NSApplicationDelegate {
         applyApplicationMenuTitle()
     }
 
-    // LSUIElement 应用没有 Dock 图标；快捷菜单隐藏时，再次从启动台打开
-    // 会触发 reopen 事件，这里负责把设置窗口前置。
+    // 再次从启动台或 Dock 打开 App 会触发 reopen 事件，
+    // 这里负责把设置窗口前置。
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !MenuBarQuickMenuPreference.isEnabled {
-            SettingsWindowController.shared.showSettings()
-        }
+        SettingsWindowController.shared.showSettings()
         return true
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
-    }
-
-    @objc private func handleUserDefaultsDidChange() {
-        quickMenuController.syncVisibility()
     }
 
     // Finder 扩展通过 rightclick://run-command 唤起 App 执行命令，
@@ -148,80 +123,28 @@ final class RightClickAppDelegate: NSObject, NSApplicationDelegate {
     private func applyApplicationMenuTitle() {
         NSApplication.shared.mainMenu?.items.first?.title = AppMetadata.displayName
     }
-}
 
-/// 状态栏快捷菜单（原 SwiftUI MenuBarExtra 的 AppKit 等价实现）。
-/// 改用 NSStatusItem 直接管理，以支持在设置页开关后运行时即时显隐。
-@MainActor
-final class MenuBarQuickMenuController: NSObject {
-    private var statusItem: NSStatusItem?
-
-    func syncVisibility() {
-        if MenuBarQuickMenuPreference.isEnabled {
-            showQuickMenu()
-        } else {
-            hideQuickMenu()
+    /// 启动阶段只确保配置文件存在，不创建设置页状态。
+    private func ensureConfigurationFileExists() {
+        do {
+            _ = try ConfigurationBootstrapper().bootstrap(paths: .defaultForCurrentProcess())
+        } catch {
+            // 生成失败时保持静默；设置页打开后会再次尝试并展示错误。
         }
     }
-
-    private func showQuickMenu() {
-        guard statusItem == nil else { return }
-
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        item.button?.image = NSImage(
-            systemSymbolName: "contextualmenu.and.cursorarrow",
-            accessibilityDescription: AppMetadata.displayName
-        )
-        item.menu = buildMenu()
-        statusItem = item
-    }
-
-    private func hideQuickMenu() {
-        guard let statusItem else { return }
-        NSStatusBar.system.removeStatusItem(statusItem)
-        self.statusItem = nil
-    }
-
-    private func buildMenu() -> NSMenu {
-        let menu = NSMenu()
-        menu.addItem(makeItem(title: "打开设置", action: #selector(openSettingsAction)))
-        menu.addItem(makeItem(title: "修复右键菜单...", action: #selector(repairContextMenuAction)))
-        menu.addItem(.separator())
-        menu.addItem(makeItem(title: "退出 \(AppMetadata.displayName)", action: #selector(quitAction)))
-        return menu
-    }
-
-    private func makeItem(title: String, action: Selector) -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
-        item.target = self
-        return item
-    }
-
-    @objc private func openSettingsAction() {
-        SettingsWindowController.shared.showSettings()
-    }
-
-    @objc private func repairContextMenuAction() {
-        let viewModel = SettingsViewModel.shared
-        viewModel.repairFinderContextMenu(restartFinder: true, userInitiated: true)
-        viewModel.selectedSection = .onboarding
-        SettingsWindowController.shared.showSettings()
-    }
-
-    @objc private func quitAction() {
-        NSApplication.shared.terminate(nil)
-    }
 }
 
 @MainActor
-final class SettingsWindowController {
+final class SettingsWindowController: NSObject, NSWindowDelegate {
     static let shared = SettingsWindowController()
     private static let frameAutosaveName = "RightClickSettingsWindow"
 
     private var window: NSWindow?
+    private var hostingView: NSHostingView<SettingsWindowRootView>?
 
     func showSettings() {
         let window = ensureWindow()
+        installContentViewIfNeeded(on: window)
         window.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
     }
@@ -240,7 +163,7 @@ final class SettingsWindowController {
         window.title = "\(AppMetadata.displayName) 设置"
         window.minSize = NSSize(width: 1180, height: 760)
         window.isReleasedWhenClosed = false
-        window.contentView = NSHostingView(rootView: SettingsWindowRootView(viewModel: SettingsViewModel.shared))
+        window.delegate = self
         let restoredFrame = window.setFrameUsingName(Self.frameAutosaveName)
         window.setFrameAutosaveName(Self.frameAutosaveName)
         if !restoredFrame {
@@ -248,6 +171,45 @@ final class SettingsWindowController {
         }
         self.window = window
         return window
+    }
+
+    /// 关闭窗口后释放 SwiftUI 视图树，只保留空壳 NSWindow 用于恢复窗口位置。
+    private func installContentViewIfNeeded(on window: NSWindow) {
+        guard hostingView == nil else {
+            return
+        }
+        let hostingView = NSHostingView(
+            rootView: SettingsWindowRootView(viewModel: SettingsViewModel.shared)
+        )
+        self.hostingView = hostingView
+        window.contentView = hostingView
+    }
+
+    /// 关闭前先拦下未保存的修改，避免用户误关窗口丢配置。
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard sender === window else {
+            return true
+        }
+        guard SettingsViewModel.shared.hasUnsavedChanges else {
+            return true
+        }
+
+        let alert = NSAlert()
+        alert.messageText = "有未保存的修改"
+        alert.informativeText = "关闭设置窗口会退出 \(AppMetadata.displayName)，当前未保存的修改将丢失。"
+        alert.addButton(withTitle: "放弃修改并退出")
+        alert.addButton(withTitle: "取消")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard let closingWindow = notification.object as? NSWindow, closingWindow === window else {
+            return
+        }
+        hostingView = nil
+        closingWindow.contentView = nil
+        // 设置窗口关闭后直接退出进程，避免后台常驻占用内存。
+        NSApplication.shared.terminate(nil)
     }
 }
 
@@ -260,5 +222,63 @@ struct SettingsWindowRootView: View {
         SettingsRootView(viewModel: viewModel)
             .frame(minWidth: 1180, idealWidth: 1448, maxWidth: .infinity, minHeight: 760, idealHeight: 980, maxHeight: .infinity)
             .preferredColorScheme(AppThemePreference(rawValue: themeRawValue)?.colorScheme)
+    }
+}
+
+/// 启动阶段只做 Finder 扩展注册检查，不创建 SettingsViewModel，
+/// 让后台常驻状态保持轻量；设置页首次打开时还会再校验一次以展示失败横幅。
+@MainActor
+enum FinderExtensionStartupRegistrar {
+    private static var isRunning = false
+
+    static func registerIfNeeded() {
+        guard !isRunning, let appexURL = bundledFinderExtensionURL() else {
+            return
+        }
+
+        let signature = FinderExtensionInstallSignature.make(
+            appexURL: appexURL,
+            hostBundleURL: Bundle.main.bundleURL
+        )
+        guard UserDefaults.standard.string(forKey: FinderExtensionSetupDefaults.completedSignatureKey) != signature else {
+            return
+        }
+
+        isRunning = true
+        let request = SystemMaintenanceRequest(
+            task: .repairFinderContextMenu,
+            finderExtensionPath: appexURL.path
+        )
+        RightClickActionRunnerXPCClient().performMaintenance(request) { result in
+            let didSucceed: Bool
+            switch result {
+            case .success(let maintenanceResult):
+                didSucceed = maintenanceResult.isSuccess
+            case .failure:
+                didSucceed = false
+            }
+            Task { @MainActor in
+                isRunning = false
+                if didSucceed {
+                    UserDefaults.standard.set(
+                        signature,
+                        forKey: FinderExtensionSetupDefaults.completedSignatureKey
+                    )
+                }
+            }
+        }
+    }
+
+    private static func bundledFinderExtensionURL() -> URL? {
+        let pluginName = "RightClickFinderExtension.appex"
+        let candidates = [
+            Bundle.main.builtInPlugInsURL?.appendingPathComponent(pluginName),
+            Bundle.main.bundleURL
+                .appendingPathComponent("Contents")
+                .appendingPathComponent("PlugIns")
+                .appendingPathComponent(pluginName)
+        ].compactMap { $0 }
+
+        return candidates.first { FileManager.default.fileExists(atPath: $0.path) }
     }
 }

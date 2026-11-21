@@ -70,9 +70,7 @@ struct OnboardingView: View {
 
                 ThemeSettingsPanel()
                 Divider()
-                MenuBarQuickMenuPanel()
-                Divider()
-                LaunchAtLoginPanel(viewModel: viewModel)
+                FinderExtensionControlPanel(viewModel: viewModel)
                 Divider()
                 UpdateCheckPanel(viewModel: viewModel)
                 Divider()
@@ -149,39 +147,6 @@ struct ThemeSettingsPanel: View {
                 .pickerStyle(.segmented)
                 .frame(width: 286)
                 .accessibilityLabel("主题")
-            }
-        }
-    }
-}
-
-struct MenuBarQuickMenuPanel: View {
-    @AppStorage(MenuBarQuickMenuPreference.storageKey) private var isQuickMenuEnabled = true
-
-    var body: some View {
-        DesignPanel {
-            HStack(alignment: .center, spacing: 16) {
-                IconBadge(systemImage: "contextualmenu.and.cursorarrow", tint: SettingsTheme.accent)
-
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("菜单栏快捷菜单")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(SettingsTheme.ink)
-                    Text(isQuickMenuEnabled
-                        ? "快捷菜单显示在 macOS 菜单栏，可随时从这里打开设置。"
-                        : "快捷菜单已隐藏，从启动台打开 RightClick 将直接进入设置窗口。")
-                        .font(.system(size: 12))
-                        .foregroundStyle(SettingsTheme.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .layoutPriority(1)
-
-                Spacer(minLength: 12)
-
-                Toggle("显示菜单栏快捷菜单", isOn: $isQuickMenuEnabled)
-                    .toggleStyle(.switch)
-                    .controlSize(.large)
-                    .labelsHidden()
-                    .accessibilityLabel("显示菜单栏快捷菜单")
             }
         }
     }
@@ -334,19 +299,27 @@ struct ResetDefaultsPanel: View {
     }
 }
 
-struct LaunchAtLoginPanel: View {
+struct FinderExtensionControlPanel: View {
     @ObservedObject var viewModel: SettingsViewModel
+    @State private var isConfirmingUnload = false
 
     var body: some View {
         DesignPanel {
             HStack(alignment: .center, spacing: 16) {
-                IconBadge(systemImage: "power.circle", tint: launchAtLoginTint)
+                IconBadge(systemImage: "puzzlepiece.extension", tint: SettingsTheme.accent)
 
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("登录时自动启动")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(SettingsTheme.ink)
-                    Text("开机登录后自动启动菜单栏应用，让 Finder 右键菜单和命令窗口随时可用。\(viewModel.launchAtLoginStatusMessage)")
+                    HStack(spacing: 8) {
+                        Text("右键菜单扩展")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(SettingsTheme.ink)
+                        extensionStatusBadge
+                    }
+                    Text("加载后 Finder 右键菜单可用；卸载只会禁用扩展，App 与配置文件不受影响。")
+                        .font(.system(size: 12))
+                        .foregroundStyle(SettingsTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("若自动切换失败，请前往「\(viewModel.finderExtensionSettingsPath)」手动开启。")
                         .font(.system(size: 12))
                         .foregroundStyle(SettingsTheme.muted)
                         .fixedSize(horizontal: false, vertical: true)
@@ -355,44 +328,68 @@ struct LaunchAtLoginPanel: View {
 
                 Spacer(minLength: 12)
 
-                HStack(spacing: 12) {
-                    Toggle(
-                        "",
-                        isOn: Binding(
-                            get: { viewModel.launchAtLoginToggleIsOn },
-                            set: { viewModel.setLaunchAtLoginEnabled($0) }
-                        )
-                    )
-                    .toggleStyle(.switch)
-                    .labelsHidden()
-                    .help("将 \(AppMetadata.displayName) 加入或移出 macOS 登录项")
-
+                HStack(spacing: 10) {
                     Button {
-                        viewModel.openLoginItemsSettings()
+                        if viewModel.finderExtensionIsRunning == true {
+                            isConfirmingUnload = true
+                        } else {
+                            viewModel.loadFinderExtension()
+                        }
                     } label: {
-                        Label("打开登录项", systemImage: "gearshape")
-                            .frame(minWidth: 112)
+                        Label(
+                            viewModel.finderExtensionIsRunning == true ? "卸载扩展" : "加载扩展",
+                            systemImage: viewModel.finderExtensionIsRunning == true
+                                ? "xmark.circle"
+                                : "puzzlepiece.extension.fill"
+                        )
+                        .frame(minWidth: 104)
                     }
                     .buttonStyle(SettingsButtonStyle())
                     .controlSize(.large)
-                    .help("打开系统设置中的登录项页面")
+                    .disabled(viewModel.isRepairingFinderMenu || viewModel.finderExtensionIsRunning == nil)
+                    .help(
+                        viewModel.finderExtensionIsRunning == true
+                            ? "禁用 Finder 扩展并重启 Finder，右键菜单会消失"
+                            : "重新注册并启用 Finder 扩展，然后重启 Finder"
+                    )
                 }
                 .fixedSize(horizontal: true, vertical: false)
             }
         }
+        .alert("卸载右键菜单扩展？", isPresented: $isConfirmingUnload) {
+            Button("取消", role: .cancel) {}
+            Button("卸载并重启 Finder", role: .destructive) {
+                viewModel.unloadFinderExtension()
+            }
+        } message: {
+            Text("卸载后 Finder 右键菜单会立即消失，重新加载即可恢复。桌面会短暂刷新一次。")
+        }
     }
 
-    private var launchAtLoginTint: Color {
-        switch viewModel.launchAtLoginStatusTone {
-        case .success:
-            return .green
-        case .warning:
-            return .orange
-        case .error:
-            return .red
-        case .neutral:
-            return SettingsTheme.accent
+    @ViewBuilder
+    private var extensionStatusBadge: some View {
+        switch viewModel.finderExtensionIsRunning {
+        case .some(true):
+            badge(text: "已加载", color: .green)
+        case .some(false):
+            badge(text: "未加载", color: .orange)
+        case .none:
+            badge(text: "检测中", color: SettingsTheme.muted)
         }
+    }
+
+    private func badge(text: String, color: Color) -> some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(color)
+                .frame(width: 6, height: 6)
+            Text(text)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(color)
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(Capsule().fill(color.opacity(0.12)))
     }
 }
 
