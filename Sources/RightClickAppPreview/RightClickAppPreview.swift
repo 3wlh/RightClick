@@ -67,6 +67,11 @@ struct RightClickAppPreview: App {
 
 @MainActor
 final class RightClickAppDelegate: NSObject, NSApplicationDelegate {
+    /// URL Scheme 唤起（命令模板 / AirDrop）时不应弹出设置窗口。
+    private var didReceiveURLLaunch = false
+    /// 尚未结束的 URL 任务数，归零且没有可见窗口时退出进程。
+    private var pendingURLTasks = 0
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // 启动阶段只保证配置文件存在并检查扩展注册，不创建设置页状态，
         // 避免后台常驻时把 SwiftUI 视图树与配置状态一直留在内存里。
@@ -77,7 +82,14 @@ final class RightClickAppDelegate: NSObject, NSApplicationDelegate {
         // 设置窗口是 App 唯一的前台界面：非登录项启动（启动台/双击）总是直接进入设置窗口，
         // 关闭窗口即退出进程；开机登录项自启（由 loginwindow 拉起）时不弹窗，保持静默后台运行。
         if !isLaunchedByLoginItem {
-            SettingsWindowController.shared.showSettings()
+            // rightclick:// 唤起时 URL 事件在 didFinishLaunching 之后才派发，
+            // 延后一小段时间再决定是否显示设置窗口，避免每次执行命令模板都弹出界面。
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+                guard let self, !self.didReceiveURLLaunch else {
+                    return
+                }
+                SettingsWindowController.shared.showSettings()
+            }
         }
     }
 
@@ -108,16 +120,38 @@ final class RightClickAppDelegate: NSObject, NSApplicationDelegate {
     // Finder 扩展通过 rightclick://run-command 唤起 App 执行命令，
     // 沙盒扩展无法发送携带 userInfo 的分布式通知，URL Scheme 是可靠的替代通道。
     func application(_ application: NSApplication, open urls: [URL]) {
+        didReceiveURLLaunch = true
         for url in urls {
+            pendingURLTasks += 1
             if let shareRequest = AirDropShareURL.request(from: url) {
+                AirDropShareController.shared.onFinished = { [weak self] in
+                    self?.urlTaskDidFinish()
+                }
                 AirDropShareController.shared.share(paths: shareRequest.paths)
                 continue
             }
             guard let request = CommandRunURL.request(from: url) else {
+                urlTaskDidFinish()
                 continue
+            }
+            CommandRunController.shared.onRequestFinished = { [weak self] in
+                self?.urlTaskDidFinish()
             }
             CommandRunController.shared.execute(request: request)
         }
+    }
+
+    private func urlTaskDidFinish() {
+        pendingURLTasks = max(0, pendingURLTasks - 1)
+        exitIfIdle()
+    }
+
+    /// URL 唤起后的任务全部结束且没有可见设置窗口时退出，实现「用完即走」。
+    private func exitIfIdle() {
+        guard pendingURLTasks == 0, !SettingsWindowController.shared.hasVisibleWindow else {
+            return
+        }
+        NSApplication.shared.terminate(nil)
     }
 
     private func applyApplicationMenuTitle() {
@@ -142,7 +176,17 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     private var hostingView: NSHostingView<SettingsWindowRootView>?
 
+    /// URL 任务结束时用它判断是否还有前台界面，避免误退正在使用的设置窗口。
+    var hasVisibleWindow: Bool {
+        window?.isVisible == true
+    }
+
     func showSettings() {
+        // 命令模板 / AirDrop 的 URL 唤起保持后台运行（不占 Dock），
+        // 只有真正打开设置窗口时才切换为普通应用。
+        if NSApplication.shared.activationPolicy() != .regular {
+            NSApplication.shared.setActivationPolicy(.regular)
+        }
         let window = ensureWindow()
         installContentViewIfNeeded(on: window)
         window.makeKeyAndOrderFront(nil)

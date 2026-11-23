@@ -7,6 +7,10 @@ import RightClickCore
 final class CommandRunController {
     static let shared = CommandRunController()
 
+    /// 单次请求结束（启动失败、静默进程退出或终端命令结束）后回调，
+    /// 供 App 判断是否可以在没有窗口时退出。
+    var onRequestFinished: (() -> Void)?
+
     /// 静默运行中的进程，需要持有引用以便超时终止与结束回收。
     private var silentProcesses: [ObjectIdentifier: Process] = [:]
 
@@ -20,6 +24,7 @@ final class CommandRunController {
             let template = config.commandTemplates.first(where: { $0.id == templateID })
         else {
             reportFailure("找不到对应的命令模板或菜单动作")
+            finishRequest()
             return
         }
 
@@ -37,15 +42,23 @@ final class CommandRunController {
                 command: expandedCommand,
                 directory: directory,
                 environment: environment
-            )
+            ) { [weak self] in
+                self?.finishRequest()
+            }
         } else {
             runSilently(
                 command: expandedCommand,
                 directory: directory,
                 environment: environment,
                 timeoutSeconds: template.timeoutSeconds
-            )
+            ) { [weak self] in
+                self?.finishRequest()
+            }
         }
+    }
+
+    private func finishRequest() {
+        onRequestFinished?()
     }
 
     private func resolvedWorkingDirectory(for template: CommandTemplate, context: FinderContext) -> URL {
@@ -58,7 +71,14 @@ final class CommandRunController {
     }
 
     /// 通过 Apple Events 让 Terminal 直接执行命令，不生成脚本文件。
-    private func runInTerminal(title: String, command: String, directory: URL, environment: [String: String]) {
+    /// 终端里的命令结束（或窗口被关闭）后才回调，App 可据此退出。
+    private func runInTerminal(
+        title: String,
+        command: String,
+        directory: URL,
+        environment: [String: String],
+        completion: @escaping @MainActor @Sendable () -> Void
+    ) {
         // 清理旧版本遗留的 .command 脚本，避免继续堆积。
         let legacyDirectory = RightClickStoragePaths.defaultForCurrentProcess()
             .baseURL
@@ -82,6 +102,8 @@ final class CommandRunController {
         setupCommands.append("clear")
         let setup = setupCommands.joined(separator: "; ")
 
+        // 最后一段 repeat 等待终端里的命令结束；窗口被关闭时 busy 查询会报错，
+        // 同样跳出循环，交给 App 退出。
         let source = """
         tell application "Terminal"
             activate
@@ -93,15 +115,28 @@ final class CommandRunController {
             end repeat
             do script "\(escapeForAppleScriptString(normalizedCommand))" in targetTab
             set custom title of targetTab to "\(escapeForAppleScriptString(title))"
+            repeat
+                delay 0.5
+                try
+                    if not (busy of targetTab) then exit repeat
+                on error
+                    exit repeat
+                end try
+            end repeat
         end tell
         """
 
-        var errorInfo: NSDictionary?
-        NSAppleScript(source: source)?.executeAndReturnError(&errorInfo)
-
-        if let errorInfo {
-            let message = (errorInfo[NSAppleScript.errorMessage] as? String) ?? "未知错误"
-            reportFailure("无法在终端中执行命令：\(message)")
+        // 等待命令结束时可能持续很久，放到后台线程执行，避免阻塞主线程。
+        DispatchQueue.global(qos: .userInitiated).async {
+            var errorInfo: NSDictionary?
+            NSAppleScript(source: source)?.executeAndReturnError(&errorInfo)
+            let message = errorInfo.flatMap { $0[NSAppleScript.errorMessage] as? String }
+            DispatchQueue.main.async {
+                if let message {
+                    self.reportFailure("无法在终端中执行命令：\(message)")
+                }
+                completion()
+            }
         }
     }
 
@@ -110,7 +145,8 @@ final class CommandRunController {
         command: String,
         directory: URL,
         environment: [String: String],
-        timeoutSeconds: Int
+        timeoutSeconds: Int,
+        completion: @escaping @MainActor @Sendable () -> Void
     ) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
@@ -127,6 +163,7 @@ final class CommandRunController {
         process.terminationHandler = { [weak self] _ in
             DispatchQueue.main.async {
                 self?.silentProcesses.removeValue(forKey: identifier)
+                completion()
             }
         }
 
@@ -135,6 +172,7 @@ final class CommandRunController {
         } catch {
             silentProcesses.removeValue(forKey: identifier)
             reportFailure("无法启动命令：\(error.localizedDescription)")
+            completion()
             return
         }
 

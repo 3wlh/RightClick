@@ -188,6 +188,9 @@ write_app_info_plist() {
   <string>$(build_number)</string>
   <key>LSMinimumSystemVersion</key>
   <string>$RIGHTCLICKPRO_MACOS_DEPLOYMENT_TARGET</string>
+  <!-- 默认以菜单栏/后台方式运行，不占 Dock；打开设置窗口时再切换为普通应用。 -->
+  <key>LSUIElement</key>
+  <true/>
   <key>NSHighResolutionCapable</key>
   <true/>
   <key>NSAppleEventsUsageDescription</key>

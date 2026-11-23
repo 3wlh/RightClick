@@ -2,33 +2,28 @@ import AppKit
 
 /// 主 App 侧展示 AirDrop 分享面板；Finder 扩展通过 rightclick://airdrop 唤起。
 ///
-/// RightClick 是菜单栏（accessory）应用，AirDrop 面板需要普通应用激活策略才能正常展示，
-/// 因此分享期间临时切换为 regular，分享结束后恢复。
+/// App 默认以后台方式运行以不占 Dock，分享面板由系统呈现，
+/// 这里只把 App 提到前台，不切换激活策略。
 @MainActor
 final class AirDropShareController: NSObject, NSSharingServiceDelegate {
     static let shared = AirDropShareController()
 
     /// 分享过程中保留 service 引用，面板关闭前不能被释放。
     private var service: NSSharingService?
-    private var previousActivationPolicy: NSApplication.ActivationPolicy?
+
+    /// 分享结束（完成、失败或无法展示）后回调，供 App 判断是否可以在没有窗口时退出。
+    var onFinished: (() -> Void)?
 
     func share(paths: [String]) {
         let urls = paths.map { URL(fileURLWithPath: $0) }
-        guard !urls.isEmpty else {
-            return
-        }
-        guard let service = NSSharingService(named: .sendViaAirDrop) else {
+        guard !urls.isEmpty, let service = NSSharingService(named: .sendViaAirDrop) else {
             NSLog("RightClick AirDrop service is unavailable")
+            finish()
             return
         }
 
         self.service = service
         service.delegate = self
-
-        if NSApp.activationPolicy() != .regular {
-            previousActivationPolicy = NSApp.activationPolicy()
-            NSApp.setActivationPolicy(.regular)
-        }
         NSApp.activate(ignoringOtherApps: true)
 
         // URL 唤起时 App 可能尚未完全激活，稍等再展示分享面板。
@@ -39,10 +34,9 @@ final class AirDropShareController: NSObject, NSSharingServiceDelegate {
 
     private func finish() {
         service = nil
-        if let policy = previousActivationPolicy {
-            NSApp.setActivationPolicy(policy)
-            previousActivationPolicy = nil
-        }
+        let handler = onFinished
+        onFinished = nil
+        handler?()
     }
 
     nonisolated func sharingService(_ sharingService: NSSharingService, didShareItems items: [Any]) {
